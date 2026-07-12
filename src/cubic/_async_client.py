@@ -29,8 +29,8 @@ class AsyncCubic:
     Args:
         api_key: A ``mxk_…`` API key. Falls back to the ``CUBIC_API_KEY``
             environment variable.
-        base_url: API origin. Falls back to ``CUBIC_BASE_URL``, then the local
-            dev server.
+        base_url: API origin. Falls back to ``CUBIC_BASE_URL``, then the
+            hosted API (https://api.cubic.zone).
         timeout: httpx timeout for all requests.
         max_retries: Automatic retries for transient failures (connection
             errors, capacity 429s, and — when the request is idempotent —

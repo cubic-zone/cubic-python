@@ -4,7 +4,7 @@ Run your Cubes and Polycubes from any Python application with a single API key.
 
 ```bash
 # from GitHub (pin a release tag)
-pip install "cubic-sdk @ git+ssh://git@github.com/zodiace/cubic-python.git@v0.3.0"
+pip install "cubic-sdk @ git+https://github.com/zodiace/cubic-python.git@v0.3.1"
 ```
 
 Not yet published to PyPI — once it is, this becomes `pip install cubic-sdk`
@@ -181,7 +181,7 @@ make retries idempotent across process restarts too.
 ```python
 client = Cubic(
     api_key="mxk_...",                   # or CUBIC_API_KEY
-    base_url="https://api.your-cubic",   # or CUBIC_BASE_URL (default: http://localhost:8010)
+    base_url="http://localhost:8010",    # or CUBIC_BASE_URL (default: https://api.cubic.zone)
     timeout=120.0,
     max_retries=3,
 )

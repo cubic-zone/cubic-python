@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-07-12)
+
+- The default `base_url` is now the hosted API (`https://api.cubic.zone`)
+  instead of the local dev server. Local development now requires an explicit
+  `base_url="http://localhost:8010"` or `CUBIC_BASE_URL`.
+
 ## 0.3.0 (2026-07-11)
 
 - `client.models` resource: `list()` (public catalog, cached in-process for

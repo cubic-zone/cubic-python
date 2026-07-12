@@ -12,9 +12,9 @@ import httpx
 from . import _exceptions as err
 from ._version import __version__
 
-# Local dev default (the API serves on :8010 in development). Point CUBIC_BASE_URL
-# or base_url= at your deployment.
-DEFAULT_BASE_URL = "http://localhost:8010"
+# The hosted Cubic API. Point CUBIC_BASE_URL or base_url= at another deployment
+# (e.g. http://localhost:8010 for local development).
+DEFAULT_BASE_URL = "https://api.cubic.zone"
 
 # Completions can legitimately run for minutes (the server's own execution
 # deadline is ~150s), so the read timeout is generous.
@@ -56,8 +56,8 @@ class Cubic:
     Args:
         api_key: A ``mxk_…`` API key. Falls back to the ``CUBIC_API_KEY``
             environment variable.
-        base_url: API origin. Falls back to ``CUBIC_BASE_URL``, then the local
-            dev server.
+        base_url: API origin. Falls back to ``CUBIC_BASE_URL``, then the
+            hosted API (https://api.cubic.zone).
         timeout: httpx timeout for all requests.
         max_retries: Automatic retries for transient failures (connection
             errors, capacity 429s, and — when the request is idempotent —
