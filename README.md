@@ -3,12 +3,8 @@
 Run your Cubes and Polycubes from any Python application with a single API key.
 
 ```bash
-# from GitHub (pin a release tag)
-pip install "cubic-sdk @ git+https://github.com/cubic-zone/cubic-python.git@v0.3.1"
+pip install cubic-sdk    # installs the `cubic` import package
 ```
-
-Not yet published to PyPI — once it is, this becomes `pip install cubic-sdk`
-(the import package is `cubic` either way).
 
 ## Quickstart
 

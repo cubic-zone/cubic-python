@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # PyPI distribution name ("cubic" is taken by an unrelated bioimaging package);
 # the import package remains `cubic`.
 name = "cubic-sdk"
-version = "0.3.1"
+version = "0.3.2"
 description = "Official Python SDK for Cubic — run your Cubes and Polycubes from any application."
 readme = "README.md"
 requires-python = ">=3.10"

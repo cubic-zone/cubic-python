@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 (2026-07-12)
+
+- First PyPI release: `pip install cubic-sdk`.
+- Repository moved to the `cubic-zone` GitHub organization; project URLs
+  updated. CI and trusted-publishing workflows added. No code changes.
+
 ## 0.3.1 (2026-07-12)
 
 - The default `base_url` is now the hosted API (`https://api.cubic.zone`)
