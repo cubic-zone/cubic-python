@@ -33,6 +33,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://cubic.zone"
 Documentation = "https://cubic.zone/docs"
+Repository = "https://github.com/cubic-zone/cubic-python"
+Changelog = "https://github.com/cubic-zone/cubic-python/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
