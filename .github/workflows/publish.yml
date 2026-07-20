@@ -1,0 +1,69 @@
+# Publishes to PyPI via trusted publishing (OIDC) — no API token stored anywhere.
+# Triggered by pushing a version tag (git tag -a vX.Y.Z && git push --follow-tags).
+#
+# One-time setup on pypi.org before the first run:
+#   Account → Publishing → "Add a new pending publisher":
+#     project:     cubic-sdk
+#     owner:       cubic-zone
+#     repository:  cubic-python
+#     workflow:    publish.yml
+#     environment: pypi
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check tag matches package version
+        run: |
+          PKG_VERSION=$(python -c "exec(open('src/cubic/_version.py').read()); print(__version__)")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $PKG_VERSION" >&2
+            exit 1
+          fi
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cubic-sdk/
+    permissions:
+      id-token: write # OIDC token for PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
