@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4 (2026-07-13)
+
+- Batch results: new `result.contents` — outputs as a dict keyed by your
+  batch item ids — plus `result.is_batch`.
+- Breaking (batch only): `result.content` now raises on a batch result
+  instead of silently returning the first item's content. Single-run
+  behavior is unchanged.
+
 ## 0.3.3 (2026-07-12)
 
 - `Cubic` and `AsyncCubic` accept `max_connections` / `max_keepalive_connections`

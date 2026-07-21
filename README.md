@@ -51,6 +51,26 @@ result.is_partial         # cube delivered content but some fallbacks failed
 result.segments           # polycube only: per-node outputs, metrics, errors
 ```
 
+## Batch runs
+
+Pass a list of `{id, variables}` items and read the outputs back by your ids:
+
+```python
+result = client.completions.create(
+    cube_id="cbe_...",
+    variables=[
+        {"id": "a", "variables": {"text": "first"}},
+        {"id": "b", "variables": {"text": "second"}},
+    ],
+)
+result.contents            # {"a": "...", "b": "..."} — delivered items only
+result.is_partial          # True if some items failed
+```
+
+On a partial batch, failed items are absent from `contents`; find them (with
+their errors) in `result.attempts` via `batch_item_id`. `result.content`
+(singular) raises on batch results — there is no single winner to return.
+
 ## Async client
 
 `AsyncCubic` has the identical surface with awaitable methods:

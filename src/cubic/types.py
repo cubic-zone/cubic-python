@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
+from ._exceptions import CubicError
+
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -110,9 +112,25 @@ class CompletionResult(_ResultBase):
         return self.status == "partial"
 
     @property
+    def is_batch(self) -> bool:
+        """True when this result came from a batch-variables run."""
+        items = self.completions or self.attempts
+        return any(c.batch_item_id is not None for c in items)
+
+    @property
     def content(self) -> str | float | dict | None:
         """The delivered content: ``merged_content`` when the strategy merges,
-        otherwise the winning completion's content."""
+        otherwise the winning completion's content.
+
+        Raises for batch results — a batch has no single winner; use
+        ``contents`` (keyed by your batch item ids) or iterate ``completions``.
+        """
+        if self.is_batch:
+            raise CubicError(
+                "This is a batch result with no single content — use "
+                "result.contents (a dict keyed by your batch item ids) or "
+                "iterate result.completions."
+            )
         if self.merged_content is not None:
             return self.merged_content
         for c in self.completions:
@@ -121,6 +139,18 @@ class CompletionResult(_ResultBase):
         if self.completions:
             return self.completions[0].content
         return None
+
+    @property
+    def contents(self) -> dict[str | None, str | float | dict | None]:
+        """Batch outputs keyed by the ``id`` of each submitted batch item.
+
+        Contains the successfully delivered items; on a partial batch, failed
+        items are absent here — find them (with errors) in ``attempts`` by
+        ``batch_item_id``. Raises for non-batch results; use ``content``.
+        """
+        if not self.is_batch:
+            raise CubicError("Not a batch result — use result.content.")
+        return {c.batch_item_id: c.content for c in self.completions}
 
 
 class Segment(_Model):
