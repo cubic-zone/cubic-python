@@ -180,5 +180,7 @@ client = Cubic(
     base_url="http://localhost:8010",    # or CUBIC_BASE_URL (default: https://api.cubic.zone)
     timeout=120.0,
     max_retries=3,
+    max_connections=200,                 # connection-pool sizing for services
+    max_keepalive_connections=50,        #   (defaults: httpx's 100/20)
 )
 ```

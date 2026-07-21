@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 (2026-07-12)
+
+- `Cubic` and `AsyncCubic` accept `max_connections` / `max_keepalive_connections`
+  to size the SDK-owned connection pool (long-lived service deployments) while
+  keeping the SDK's completion-sized timeout. Combining them with a
+  bring-your-own `http_client` raises — configure `httpx.Limits` there instead.
+
 ## 0.3.2 (2026-07-12)
 
 - First PyPI release: `pip install cubic-sdk`.

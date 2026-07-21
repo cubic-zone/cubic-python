@@ -50,6 +50,25 @@ def next_delay(attempt: int, retry_after: float | None, base: float) -> float:
     return delay + random.uniform(0, delay / 4)
 
 
+def pool_limit_kwargs(
+    max_connections: int | None, max_keepalive_connections: int | None
+) -> dict[str, Any]:
+    """httpx.Client kwargs for pool limits; empty when neither is set so the
+    httpx defaults apply. (A bare ``httpx.Limits()`` would mean *unlimited* —
+    unset fields are filled with httpx's defaults instead.)"""
+    if max_connections is None and max_keepalive_connections is None:
+        return {}
+    return {
+        "limits": httpx.Limits(
+            max_connections=100 if max_connections is None else max_connections,
+            max_keepalive_connections=(
+                20 if max_keepalive_connections is None else max_keepalive_connections
+            ),
+            keepalive_expiry=5.0,
+        )
+    }
+
+
 class Cubic:
     """Synchronous client for the Cubic API.
 
@@ -62,8 +81,14 @@ class Cubic:
         max_retries: Automatic retries for transient failures (connection
             errors, capacity 429s, and — when the request is idempotent —
             5xx responses).
+        max_connections / max_keepalive_connections: Connection-pool limits
+            for the SDK-owned transport (defaults: httpx's 100/20). Not
+            combinable with ``http_client`` — configure your own client's
+            ``httpx.Limits`` instead.
         http_client: Bring your own ``httpx.Client`` (proxies, custom
-            transports, testing). The SDK will not close it for you.
+            transports, testing). The SDK will not close it for you, and your
+            client's own timeout config applies (httpx defaults to 5s — set
+            something completion-sized like the SDK's 180s default).
     """
 
     def __init__(
@@ -73,6 +98,8 @@ class Cubic:
         base_url: str | None = None,
         timeout: httpx.Timeout | float | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        max_connections: int | None = None,
+        max_keepalive_connections: int | None = None,
         http_client: httpx.Client | None = None,
         backoff_base: float = 0.5,
     ) -> None:
@@ -87,7 +114,19 @@ class Cubic:
         self.max_retries = max_retries
         self._backoff_base = backoff_base
         self._own_http = http_client is None
-        self._http = http_client or httpx.Client(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
+        if http_client is not None:
+            if max_connections is not None or max_keepalive_connections is not None:
+                raise err.CubicError(
+                    "max_connections/max_keepalive_connections only apply to the "
+                    "SDK-owned transport — configure httpx.Limits on your own "
+                    "http_client instead."
+                )
+            self._http = http_client
+        else:
+            self._http = httpx.Client(
+                timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+                **pool_limit_kwargs(max_connections, max_keepalive_connections),
+            )
         # Remembers which public IDs turned out to be polycubes, so we stop
         # attaching fields the chain path rejects (e.g. client_request_id).
         self._kind_cache: dict[str, str] = {}

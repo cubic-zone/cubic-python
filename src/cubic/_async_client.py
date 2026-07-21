@@ -16,6 +16,7 @@ from ._client import (
     classify_retry,
     error_from_response,
     next_delay,
+    pool_limit_kwargs,
 )
 from ._version import __version__
 
@@ -35,8 +36,14 @@ class AsyncCubic:
         max_retries: Automatic retries for transient failures (connection
             errors, capacity 429s, and — when the request is idempotent —
             5xx responses).
+        max_connections / max_keepalive_connections: Connection-pool limits
+            for the SDK-owned transport (defaults: httpx's 100/20). Not
+            combinable with ``http_client`` — configure your own client's
+            ``httpx.Limits`` instead.
         http_client: Bring your own ``httpx.AsyncClient`` (proxies, custom
-            transports, testing). The SDK will not close it for you.
+            transports, testing). The SDK will not close it for you, and your
+            client's own timeout config applies (httpx defaults to 5s — set
+            something completion-sized like the SDK's 180s default).
     """
 
     def __init__(
@@ -46,6 +53,8 @@ class AsyncCubic:
         base_url: str | None = None,
         timeout: httpx.Timeout | float | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        max_connections: int | None = None,
+        max_keepalive_connections: int | None = None,
         http_client: httpx.AsyncClient | None = None,
         backoff_base: float = 0.5,
     ) -> None:
@@ -60,9 +69,19 @@ class AsyncCubic:
         self.max_retries = max_retries
         self._backoff_base = backoff_base
         self._own_http = http_client is None
-        self._http = http_client or httpx.AsyncClient(
-            timeout=timeout if timeout is not None else DEFAULT_TIMEOUT
-        )
+        if http_client is not None:
+            if max_connections is not None or max_keepalive_connections is not None:
+                raise err.CubicError(
+                    "max_connections/max_keepalive_connections only apply to the "
+                    "SDK-owned transport — configure httpx.Limits on your own "
+                    "http_client instead."
+                )
+            self._http = http_client
+        else:
+            self._http = httpx.AsyncClient(
+                timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+                **pool_limit_kwargs(max_connections, max_keepalive_connections),
+            )
         self._kind_cache: dict[str, str] = {}
 
         from .resources.completions import AsyncCompletions
