@@ -140,6 +140,93 @@ cube.models                # the model stack (provider, model, rank, role)
 Definitions are owner-only: marketplace cubes you subscribe to can be *run*
 but not read, and polycube definitions are not yet available on this endpoint.
 
+## Authoring cubes
+
+The full authoring lifecycle works by API key — create a cube, iterate its
+wording without saving, commit the winner as a version, and roll back if a
+change regresses. This is designed for LLM-driven authoring as much as for
+scripts.
+
+```python
+# Where will it live? (optional — defaults to the key's created-in project)
+projects = client.projects.list()                    # public prj_… ids
+
+cube = client.cubes.create(
+    "Support reply drafter",
+    system_instructions="You are a courteous support agent for ACME.",
+    user_prompt="Draft a reply to {{customer_name}} about {{issue}}.",
+    models=[{"provider": "openai", "model_name": "gpt-4o-mini", "rank": 0}],
+    project_id=projects[0].project_id,
+)
+# cube.cube_id → "cbe_…", version 1 / "1.0.0", immediately runnable
+```
+
+Iterate wording at zero version cost — `test` runs synchronously, bypasses any
+callback URL, and never saves:
+
+```python
+candidate = "Draft a warm, concise reply to {{customer_name}} about {{issue}}."
+result = client.cubes.test(
+    cube.cube_id,
+    variables={"customer_name": "Ada", "issue": "billing"},
+    user_prompt=candidate,          # UNSAVED override; variables re-extracted
+)
+# judge result.content … loop with new candidates until satisfied, then:
+v = client.cubes.create_version(
+    cube.cube_id,
+    system_instructions=cube.system_instructions,   # a version is a full snapshot
+    user_prompt=candidate,
+)
+# v.version → e.g. "1.0.1" — the server sizes the semantic bump to the delta
+# (patch < 5% changed ≤ minor < 40% ≤ major); v.change_ratio tells you how big
+# your edit measured.
+```
+
+Config changes (never versioned) and history:
+
+```python
+client.cubes.update(cube.cube_id, title="Support drafter v2",
+                    models=[{"provider": "anthropic",
+                             "model_name": "claude-haiku-4-5", "rank": 0}])
+client.cubes.versions(cube.cube_id)                  # newest first, is_current flag
+client.cubes.set_current_version(cube.cube_id, 1)    # rollback — pointer only
+```
+
+`create` attaches an `Idempotency-Key` automatically, so a retried create
+replays the original cube instead of minting a duplicate. Cube writes share a
+per-user rate limit (60/min) — plenty for iteration loops, bounded against
+runaways. To move a cube to another project:
+`client.cubes.update(cube.cube_id, project_id="prj_…")`.
+
+## Authoring polycubes
+
+A polycube chains cubes into a DAG — each edge maps one node's output onto a
+downstream node's variable. No versions: the graph is the definition.
+
+```python
+poly = client.polycubes.create(
+    "Draft and polish",
+    nodes=[
+        {"node_key": "draft",  "cube_id": drafter.cube_id},
+        {"node_key": "polish", "cube_id": polisher.cube_id, "version": 2},  # pinned
+    ],
+    edges=[
+        # draft's whole output feeds polisher's {{draft}} variable; set
+        # "source_field" to pick one response-format field instead.
+        {"source_node_key": "draft", "target_node_key": "polish",
+         "target_variable": "draft"},
+    ],
+)
+poly.inputs                      # derived signature — what a run must supply
+client.completions.create(cube_id=poly.polycube_id, variables={"topic": "the sea"})
+
+client.polycubes.retrieve(poly.polycube_id)
+client.polycubes.update(poly.polycube_id, nodes=[...], edges=[...])  # wholesale replace
+```
+
+Every node's cube must live in the polycube's project and use the fallback
+strategy; the graph must be acyclic (`chain_graph_cycle` on a 422 otherwise).
+
 ## The model catalog
 
 ```python

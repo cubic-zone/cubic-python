@@ -253,6 +253,81 @@ class CubeModel(_Model):
     role: str
 
 
+class CubeVersion(_Model):
+    """One saved version of a cube's content.
+
+    ``version_number`` is the internal monotonic sequence (pin/rollback by it);
+    ``version`` is the human-facing semantic label the server sizes to the
+    content delta (``change_ratio``: 0 = identical to the previous version,
+    1 = fully different).
+    """
+
+    version_number: int
+    version: str
+    change_ratio: float | None = None
+    is_current: bool = False
+    created_at: datetime | None = None
+
+
+class Project(_Model):
+    """One of your projects (``GET /v1/projects``) — a placement target for
+    cubes. ``project_id`` is the public ``prj_…`` id used on ``cubes.create``."""
+
+    project_id: str
+    name: str
+    description: str | None = None
+    is_marketplace: bool = False
+
+
+class PolycubeNode(_Model):
+    """One node of a polycube graph — a cube plus its optional version pin."""
+
+    node_key: str
+    cube_id: str
+    title: str | None = None
+    completion_type: str | None = None
+    version_number: int | None = None  # the pin; None = follows current
+    resolved_version: int | None = None
+    version_label: str | None = None
+    variables: dict = {}
+    output_fields: list[dict] | None = None  # None = text-only output port
+    position_x: float = 0
+    position_y: float = 0
+
+
+class PolycubeEdge(_Model):
+    """One field→variable mapping between two nodes."""
+
+    source_node_key: str
+    target_node_key: str
+    source_field: str | None = None  # None = the source node's whole output
+    target_variable: str
+
+
+class PolycubeInput(_Model):
+    """One entry of the polycube's derived input signature — a variable a run
+    must supply because no edge fills it."""
+
+    name: str
+    type: str = "string"
+    required: bool = True
+    description: str | None = None
+    consumers: list[dict] = []
+
+
+class Polycube(_Model):
+    """A polycube definition (owner-only) — the graph plus its derived inputs."""
+
+    polycube_id: str
+    title: str
+    description: str | None = None
+    callback_url: str | None = None
+    nodes: list[PolycubeNode] = []
+    edges: list[PolycubeEdge] = []
+    inputs: list[PolycubeInput] = []
+    warnings: list[str] = []
+
+
 class Cube(_Model):
     """A cube definition (owner-only read surface).
 

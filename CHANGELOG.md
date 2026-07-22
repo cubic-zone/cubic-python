@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 (2026-07-22)
+
+- Cube authoring by API key: `cubes.create`, `cubes.update`, `cubes.test`
+  (unsaved content overrides — the prompt-iteration primitive),
+  `cubes.create_version` (server-sized semantic version bumps),
+  `cubes.versions`, and `cubes.set_current_version` (rollback), on both
+  clients. `cubes.create` auto-attaches an `Idempotency-Key` so retries
+  replay instead of duplicating.
+- New `client.projects.list()` — public `prj_…` project ids, the placement
+  targets for `cubes.create`.
+- Polycube authoring: `polycubes.create/retrieve/update` — build and edit
+  DAGs of cubes by API key (nodes accept `cube_id`/`version`, translated to
+  the wire contract). `cubes.update(project_id=…)` moves a cube between
+  projects.
+- New types: `CubeVersion`, `Project`, `Polycube` (+ node/edge/input shapes).
+
 ## 0.3.4 (2026-07-13)
 
 - Batch results: new `result.contents` — outputs as a dict keyed by your

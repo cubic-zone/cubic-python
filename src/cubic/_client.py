@@ -134,10 +134,14 @@ class Cubic:
         from .resources.completions import Completions
         from .resources.cubes import Cubes
         from .resources.models import Models
+        from .resources.polycubes import Polycubes
+        from .resources.projects import Projects
 
         self.completions = Completions(self)
         self.cubes = Cubes(self)
         self.models = Models(self)
+        self.polycubes = Polycubes(self)
+        self.projects = Projects(self)
 
     # ---- lifecycle ----
     def close(self) -> None:
@@ -159,12 +163,15 @@ class Cubic:
         json_body: dict | None = None,
         params: dict | None = None,
         idempotent: bool = False,
+        extra_headers: dict | None = None,
     ) -> httpx.Response:
         url = f"{self.base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "User-Agent": f"cubic-python/{__version__}",
         }
+        if extra_headers:
+            headers.update(extra_headers)
         attempt = 0
         while True:
             retry_after: float | None = None

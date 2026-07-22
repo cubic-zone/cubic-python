@@ -87,10 +87,14 @@ class AsyncCubic:
         from .resources.completions import AsyncCompletions
         from .resources.cubes import AsyncCubes
         from .resources.models import AsyncModels
+        from .resources.polycubes import AsyncPolycubes
+        from .resources.projects import AsyncProjects
 
         self.completions = AsyncCompletions(self)
         self.cubes = AsyncCubes(self)
         self.models = AsyncModels(self)
+        self.polycubes = AsyncPolycubes(self)
+        self.projects = AsyncProjects(self)
 
     # ---- lifecycle ----
     async def aclose(self) -> None:
@@ -112,12 +116,15 @@ class AsyncCubic:
         json_body: dict | None = None,
         params: dict | None = None,
         idempotent: bool = False,
+        extra_headers: dict | None = None,
     ) -> httpx.Response:
         url = f"{self.base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "User-Agent": f"cubic-python/{__version__}",
         }
+        if extra_headers:
+            headers.update(extra_headers)
         attempt = 0
         while True:
             retry_after: float | None = None
