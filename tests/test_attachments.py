@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
+from conftest import body_of, cube_success_body, make_async_client, make_client
 
 from cubic import Attachment, CubicError
-from tests.conftest import body_of, cube_success_body, make_async_client, make_client
 
 
 def attachment_body(**overrides) -> dict:
@@ -22,8 +22,8 @@ def attachment_body(**overrides) -> dict:
         "size_bytes": 1234,
         "sha256": "ab" * 32,
         "status": "active",
-        "expires_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
-        "created_at": datetime.now(UTC).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     body.update(overrides)
     return body
