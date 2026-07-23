@@ -84,12 +84,14 @@ class AsyncCubic:
             )
         self._kind_cache: dict[str, str] = {}
 
+        from .resources.attachments import AsyncAttachments
         from .resources.completions import AsyncCompletions
         from .resources.cubes import AsyncCubes
         from .resources.models import AsyncModels
         from .resources.polycubes import AsyncPolycubes
         from .resources.projects import AsyncProjects
 
+        self.attachments = AsyncAttachments(self)
         self.completions = AsyncCompletions(self)
         self.cubes = AsyncCubes(self)
         self.models = AsyncModels(self)
@@ -115,6 +117,7 @@ class AsyncCubic:
         *,
         json_body: dict | None = None,
         params: dict | None = None,
+        files: dict | None = None,
         idempotent: bool = False,
         extra_headers: dict | None = None,
     ) -> httpx.Response:
@@ -130,7 +133,7 @@ class AsyncCubic:
             retry_after: float | None = None
             try:
                 response = await self._http.request(
-                    method, url, json=json_body, params=params, headers=headers
+                    method, url, json=json_body, params=params, files=files, headers=headers
                 )
             except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                 # The request never reached the server — always safe to retry.

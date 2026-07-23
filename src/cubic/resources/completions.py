@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from .. import _exceptions as err
 from ..types import AttemptError, CompletionRecord, CompletionResult, PolycubeResult
+from .attachments import AttachmentInput, build_attachment_entries
 
 if TYPE_CHECKING:
     import httpx
@@ -34,6 +35,14 @@ CREATE_DOC = """Run a cube or polycube by its public ID.
         ``version``, ``history``, ``models``, ``parameters``, batch
         ``variables``, and ``client_request_id`` apply to plain cubes only;
         the API rejects them for polycubes.
+
+        ``attachments`` works for both kinds (a polycube delivers them to its
+        first cube). Each entry is an ``att_…`` id (from
+        ``client.attachments.upload``), an :class:`~cubic.types.Attachment`,
+        a :class:`~pathlib.Path`, or ``(filename, bytes)`` — the latter two
+        are sent inline. Every model in the cube's stack must accept
+        native-tier files (PDF/images) or the API rejects the run with 422
+        ``attachment_not_supported``.
 
         A ``client_request_id`` is attached automatically for plain cubes so
         transient failures can be retried without double-executing. When
@@ -62,6 +71,7 @@ def build_create_payload(
     metadata: dict[str, Any] | None,
     client_request_id: str | uuid.UUID | None,
     known_polycube: bool,
+    attachments: list[AttachmentInput] | None = None,
 ) -> tuple[dict[str, Any], bool, str | None]:
     """Build the POST /v1/completions body.
 
@@ -93,6 +103,10 @@ def build_create_payload(
         payload["test_response_content"] = test_response_content
     if metadata is not None:
         payload["metadata"] = metadata
+    if attachments:
+        # Valid for both kinds (root-node delivery on polycubes), so it plays
+        # no part in the polycube-fallback retry decision below.
+        payload["attachments"] = build_attachment_entries(attachments)
     if client_request_id is not None:
         payload["client_request_id"] = str(client_request_id)
     elif auto_request_id is not None:
@@ -238,6 +252,7 @@ class Completions:
         test_mode: bool = False,
         test_response_content: str | dict[str, str] | None = None,
         metadata: dict[str, Any] | None = None,
+        attachments: list[AttachmentInput] | None = None,
         client_request_id: str | uuid.UUID | None = None,
     ) -> CompletionResult | PolycubeResult:
         payload, caller_supplied_cube_only, auto_request_id = build_create_payload(
@@ -254,6 +269,7 @@ class Completions:
             metadata=metadata,
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
+            attachments=attachments,
         )
         try:
             response = self._client.request(
@@ -330,6 +346,7 @@ class AsyncCompletions:
         test_mode: bool = False,
         test_response_content: str | dict[str, str] | None = None,
         metadata: dict[str, Any] | None = None,
+        attachments: list[AttachmentInput] | None = None,
         client_request_id: str | uuid.UUID | None = None,
     ) -> CompletionResult | PolycubeResult:
         payload, caller_supplied_cube_only, auto_request_id = build_create_payload(
@@ -346,6 +363,7 @@ class AsyncCompletions:
             metadata=metadata,
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
+            attachments=attachments,
         )
         try:
             response = await self._client.request(

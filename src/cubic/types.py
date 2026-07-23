@@ -269,6 +269,28 @@ class CubeVersion(_Model):
     created_at: datetime | None = None
 
 
+class Attachment(_Model):
+    """An uploaded attachment (``POST /v1/attachments``).
+
+    ``id`` is the reusable ``att_…`` reference for ``completions.create``.
+    ``tier`` is how the platform will handle it: ``native`` (forwarded to the
+    model as a multimodal part — PDF/images), ``text`` (injected into the
+    prompt — MD/TXT/RTF/SVG), or ``extraction`` (text-extracted server-side —
+    DOCX/PPTX/XLSX). The type is sniffed from the file's bytes, never from its
+    name. Bytes are retained for 7 days (``expires_at``); the id keeps working
+    for re-runs until then."""
+
+    id: str
+    filename: str
+    media_type: str
+    tier: Literal["text", "native", "extraction"]
+    size_bytes: int
+    sha256: str
+    status: str
+    expires_at: datetime
+    created_at: datetime | None = None
+
+
 class Project(_Model):
     """One of your projects (``GET /v1/projects``) — a placement target for
     cubes. ``project_id`` is the public ``prj_…`` id used on ``cubes.create``."""

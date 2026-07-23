@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 (2026-07-23)
+
+- Attachments: new `client.attachments` resource (`upload`, `retrieve`,
+  `delete`) and an `attachments=` parameter on `completions.create` for both
+  clients. Entries may be `att_…` ids, `Attachment` objects, `pathlib.Path`s,
+  or `(filename, bytes)` tuples — the latter two are sent inline (base64).
+  Works for cubes and polycubes (a polycube delivers attachments to its first
+  cube). PDFs and images go to the model natively (every model in the stack
+  must support them); MD/TXT/RTF/SVG are injected as text; DOCX/PPTX/XLSX are
+  text-extracted server-side, cached per attachment. Bytes are retained for
+  7 days; ids stay reusable across runs in that window.
+- New type: `Attachment`.
+- `request()` on both clients accepts `files=` (multipart).
+
 ## 0.4.0 (2026-07-22)
 
 - Cube authoring by API key: `cubes.create`, `cubes.update`, `cubes.test`

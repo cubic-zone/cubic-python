@@ -131,12 +131,14 @@ class Cubic:
         # attaching fields the chain path rejects (e.g. client_request_id).
         self._kind_cache: dict[str, str] = {}
 
+        from .resources.attachments import Attachments
         from .resources.completions import Completions
         from .resources.cubes import Cubes
         from .resources.models import Models
         from .resources.polycubes import Polycubes
         from .resources.projects import Projects
 
+        self.attachments = Attachments(self)
         self.completions = Completions(self)
         self.cubes = Cubes(self)
         self.models = Models(self)
@@ -162,6 +164,7 @@ class Cubic:
         *,
         json_body: dict | None = None,
         params: dict | None = None,
+        files: dict | None = None,
         idempotent: bool = False,
         extra_headers: dict | None = None,
     ) -> httpx.Response:
@@ -176,7 +179,9 @@ class Cubic:
         while True:
             retry_after: float | None = None
             try:
-                response = self._http.request(method, url, json=json_body, params=params, headers=headers)
+                response = self._http.request(
+                    method, url, json=json_body, params=params, files=files, headers=headers
+                )
             except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                 # The request never reached the server — always safe to retry.
                 exc: err.CubicError = err.APIConnectionError(f"Could not reach {self.base_url}: {e}")

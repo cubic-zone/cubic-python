@@ -51,6 +51,35 @@ result.is_partial         # cube delivered content but some fallbacks failed
 result.segments           # polycube only: per-node outputs, metrics, errors
 ```
 
+## Attachments
+
+Attach files to a run — PDFs and images go to the model natively, MD/TXT/RTF/SVG
+are injected into the prompt as text, and Office files (DOCX/PPTX/XLSX) are
+text-extracted server-side. The real type is sniffed from the bytes; the total
+per run is capped at 50MB / 20 files.
+
+```python
+from pathlib import Path
+
+# One-shot: pass files directly (sent inline with the request)
+result = client.completions.create(
+    cube_id="cbe_...",
+    variables={"question": "What were Q4 margins?"},
+    attachments=[Path("q4-report.pdf"), ("notes.md", b"# context")],
+)
+
+# Reusable: upload once, reference the att_… id across runs for 7 days.
+# Office files are extracted once per attachment, so re-runs are cheaper.
+att = client.attachments.upload("q4-report.pdf")
+att.tier                  # "native" | "text" | "extraction" — how it will be handled
+result = client.completions.create(cube_id="cbe_...", attachments=[att])
+```
+
+Native-tier files (PDF/images) require every model in the cube's stack to
+support that input type — incompatible stacks are rejected with a 422
+(`attachment_not_supported`) before any spend. Polycubes accept attachments
+too: they're delivered to the chain's first cube.
+
 ## Batch runs
 
 Pass a list of `{id, variables}` items and read the outputs back by your ids:

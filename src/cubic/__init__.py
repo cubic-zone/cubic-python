@@ -39,6 +39,7 @@ from ._exceptions import (
 )
 from ._version import __version__
 from .types import (
+    Attachment,
     AttemptError,
     CompletionRecord,
     CompletionResult,
@@ -84,6 +85,7 @@ __all__ = [
     "WaitTimeoutError",
     "WebhookSignatureError",
     # types
+    "Attachment",
     "AttemptError",
     "Metrics",
     "SingleCompletion",
