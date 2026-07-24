@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 (2026-07-24)
+
+- Binary outputs (Binary Cubes): `result.file` / `result.files` return
+  `GeneratedFile` metadata for image/audio-generating cubes (per-completion
+  `SingleCompletion.files` too), and the new `client.files` resource downloads
+  the bytes — `download(file_or_id)` returns a `DownloadedFile` (bytes +
+  media type), `save(file_or_id, path)` writes it to disk (a directory path
+  derives the filename). Downloads authenticate through `GET /v1/files/{id}`
+  and work for the file's whole 30-day retention, unlike the ~1h presigned
+  `url` on the metadata; after retention they raise `NotFoundError` with code
+  `file_expired`. Test-mode stub files (data-URI urls) decode locally with no
+  HTTP call.
+- New types: `GeneratedFile`, `DownloadedFile`.
+
 ## 0.5.0 (2026-07-23)
 
 - Attachments: new `client.attachments` resource (`upload`, `retrieve`,

@@ -134,11 +134,13 @@ class Cubic:
         from .resources.attachments import Attachments
         from .resources.completions import Completions
         from .resources.cubes import Cubes
+        from .resources.files import Files
         from .resources.models import Models
         from .resources.polycubes import Polycubes
         from .resources.projects import Projects
 
         self.attachments = Attachments(self)
+        self.files = Files(self)
         self.completions = Completions(self)
         self.cubes = Cubes(self)
         self.models = Models(self)

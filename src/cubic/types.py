@@ -48,6 +48,41 @@ class Metrics(_Model):
     credits_charged: int = 0
 
 
+class GeneratedFile(_Model):
+    """One binary artifact a Binary Cube generated (image/audio).
+
+    ``url`` is a short-lived presigned download link (about an hour) — for
+    durable access use ``client.files.download(file)`` / ``save()``, which work
+    for the file's whole 30-day retention. After retention, ``status`` reads
+    ``"expired"``: the metadata stays, the bytes are gone. Test-mode runs return
+    a built-in stub (``test_stub=True``, ``id=None``, data-URI ``url``)."""
+
+    id: str | None = None  # fil_… (None for test-mode stubs)
+    kind: str | None = None  # image | audio | video
+    media_type: str
+    size_bytes: int | None = None
+    sha256: str | None = None
+    url: str | None = None
+    status: str | None = None  # "active" | "expired" (populated on record reads)
+    expires_at: datetime | None = None
+    test_stub: bool = False
+
+    @property
+    def is_expired(self) -> bool:
+        return self.status == "expired"
+
+
+def _files_of(content: Any) -> list[GeneratedFile]:
+    """Parse a completion's content into GeneratedFiles (empty for text)."""
+    if not isinstance(content, dict):
+        return []
+    if isinstance(content.get("file"), dict):
+        return [GeneratedFile.model_validate(content["file"])]
+    if isinstance(content.get("files"), list):
+        return [GeneratedFile.model_validate(f) for f in content["files"] if isinstance(f, dict)]
+    return []
+
+
 class SingleCompletion(_Model):
     completion_id: uuid.UUID
     content: str | dict | None = None
@@ -58,6 +93,11 @@ class SingleCompletion(_Model):
     batch_item_id: str | None = None
     metrics: Metrics
     error: AttemptError | None = None
+
+    @property
+    def files(self) -> list[GeneratedFile]:
+        """Generated binary artifacts of this completion (empty for text)."""
+        return _files_of(self.content)
 
 
 class _ResultBase(_Model):
@@ -151,6 +191,32 @@ class CompletionResult(_ResultBase):
         if not self.is_batch:
             raise CubicError("Not a batch result — use result.content.")
         return {c.batch_item_id: c.content for c in self.completions}
+
+    @property
+    def files(self) -> list[GeneratedFile]:
+        """Every generated binary artifact across the delivered completions
+        (Binary Cubes) — one per output for broadcast/batch runs, usually one
+        for fallback. Empty for text cubes."""
+        out: list[GeneratedFile] = []
+        for c in self.completions:
+            if c.error is None:
+                out.extend(c.files)
+        return out
+
+    @property
+    def file(self) -> GeneratedFile | None:
+        """THE generated file of a single-output binary run (fallback cubes).
+
+        ``None`` for text results; raises when the run produced several files
+        (broadcast/batch) — use ``files`` there."""
+        files = self.files
+        if not files:
+            return None
+        if len(files) > 1:
+            raise CubicError(
+                f"This run produced {len(files)} files — use result.files."
+            )
+        return files[0]
 
 
 class Segment(_Model):

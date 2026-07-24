@@ -80,6 +80,37 @@ support that input type — incompatible stacks are rejected with a 422
 (`attachment_not_supported`) before any spend. Polycubes accept attachments
 too: they're delivered to the chain's first cube.
 
+## Binary outputs (Binary Cubes)
+
+A cube built on an image- or audio-generating model returns files instead of
+text. Each generated file's metadata (id, MIME type, size, short-lived download
+URL) rides the normal result; the bytes live for 30 days.
+
+```python
+result = client.completions.create(
+    cube_id="cbe_...",                     # e.g. a Gemini image-model cube
+    variables={"subject": "a red lighthouse"},
+)
+
+f = result.file                            # GeneratedFile (single-output runs)
+f.media_type                               # "image/png"
+f.url                                      # presigned link (~1 hour)
+
+client.files.save(f, "poster.png")         # durable download via your API key
+raw = client.files.download(f)             # DownloadedFile: .data, .media_type
+
+result.files                               # every file (broadcast/batch runs)
+```
+
+Downloads via `client.files` work for the whole 30-day retention; afterwards
+they raise `NotFoundError` with code `file_expired` (the metadata remains on
+the run's record, marked `status="expired"`). Test-mode runs return a built-in
+stub file that `download()` decodes locally at zero cost.
+
+Plain-HTTP consumers can also pass `?response=file` on `POST /v1/completions`
+(single-file fallback cubes) to get the raw bytes as the response body — the
+SDK's envelope + `files.download` covers the same need with metrics intact.
+
 ## Batch runs
 
 Pass a list of `{id, variables}` items and read the outputs back by your ids:

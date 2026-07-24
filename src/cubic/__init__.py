@@ -38,6 +38,7 @@ from ._exceptions import (
     WebhookSignatureError,
 )
 from ._version import __version__
+from .resources.files import DownloadedFile
 from .types import (
     Attachment,
     AttemptError,
@@ -46,6 +47,7 @@ from .types import (
     Cube,
     CubeModel,
     CubeVersion,
+    GeneratedFile,
     Metrics,
     Model,
     Polycube,
@@ -86,6 +88,8 @@ __all__ = [
     "WebhookSignatureError",
     # types
     "Attachment",
+    "GeneratedFile",
+    "DownloadedFile",
     "AttemptError",
     "Metrics",
     "SingleCompletion",
