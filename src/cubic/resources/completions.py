@@ -40,6 +40,12 @@ CREATE_DOC = """Run a cube or polycube by its public ID.
         ``variables``, and ``client_request_id`` apply to plain cubes only;
         the API rejects them for polycubes.
 
+        ``models`` replaces the cube's stack for this run only — entries as
+        listed by ``client.models.list()``, or a model alias
+        (``{"provider": "alias", "model_name": "fast-default", "rank": 0}``),
+        which resolves against *your* aliases. Overrides are owner-only: a cube
+        you subscribe to on the marketplace rejects them outright.
+
         Files are ordinary inputs: give a file-typed variable a
         :class:`~pathlib.Path`, ``(filename, bytes)``, an
         :class:`~cubic.types.Attachment`, or an ``att_…`` id, and the SDK

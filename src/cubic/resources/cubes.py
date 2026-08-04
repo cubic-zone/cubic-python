@@ -45,9 +45,14 @@ CREATE_DOC = """Create a cube in one call — definition, model stack, and initi
 
         ``models`` entries are ``{"provider": ..., "model_name": ..., "rank": n}``
         pairs exactly as listed by ``client.models.list()``; lower rank is tried
-        first (fallback order). ``project_id`` is a public ``prj_…`` id from
-        ``client.projects.list()``; omitted, the cube lands in the API key's
-        created-in project (falling back to your default project).
+        first (fallback order). An entry may instead name a **model alias** —
+        ``{"provider": "alias", "model_name": "fast-default", "rank": 0}`` —
+        which resolves to whatever that alias points at when the run starts, so
+        re-pointing it in the dashboard switches this cube without republishing
+        it. Aliases are managed under Setup → Models and are not in the catalog.
+        ``project_id`` is a public ``prj_…`` id from ``client.projects.list()``;
+        omitted, the cube lands in the API key's created-in project (falling
+        back to your default project).
 
 
         ``variables`` declares the cube's inputs — ``{name: {"type", "required",
@@ -70,7 +75,8 @@ CREATE_DOC = """Create a cube in one call — definition, model stack, and initi
         failures retry safely without minting duplicate cubes.
 
         Raises :class:`~cubic.InvalidRequestError` for unknown models
-        (``error_code="unknown_model"``), strategy violations, or invalid
+        (``error_code="unknown_model"``), an alias you don't have
+        (``error_code="alias_not_found"``), strategy violations, or invalid
         markers, and :class:`~cubic.NotFoundError` for a foreign/unknown
         ``project_id``.
         """

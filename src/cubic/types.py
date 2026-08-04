@@ -294,6 +294,9 @@ class Model(_Model):
 
     ``model_name`` is the provider call-string used in ``models=`` overrides
     and cube model stacks; ``display_name`` is the human-facing label.
+
+    The catalog holds concrete servings only — model aliases are never returned
+    here, so ``models.retrieve()`` will not resolve one. See :class:`CubeModel`.
     """
 
     provider: str
@@ -311,7 +314,18 @@ class Model(_Model):
 
 
 class CubeModel(_Model):
-    """One entry of a cube's model stack."""
+    """One entry of a cube's model stack.
+
+    Usually a concrete serving: ``provider`` is the service that runs it and
+    ``model_name`` its call-string, as listed by ``client.models.list()``.
+
+    ``provider`` may also be the reserved value ``"alias"``, in which case
+    ``model_name`` is a **model alias** — a name you manage in the dashboard
+    (Setup → Models) that points at a real model. Cubic substitutes the target
+    when the run starts, so re-pointing the alias switches every cube using it
+    without republishing any of them. Results always report the model that
+    actually ran, never the alias.
+    """
 
     provider: str
     model_name: str

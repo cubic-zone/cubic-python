@@ -276,6 +276,8 @@ def error_from_response(response: httpx.Response) -> err.CubicError:
         if error_code == "completion_not_found":
             return err.CompletionNotFoundError(message, **common)
         return err.NotFoundError(message, **common)
+    if status == 409:
+        return err.ConflictError(message, **common)
     if status == 422:
         return err.InvalidRequestError(message, **common)
     if status == 429:

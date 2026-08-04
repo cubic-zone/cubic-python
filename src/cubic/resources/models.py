@@ -5,6 +5,12 @@ model stacks. It changes at most ~daily (a sync job refreshes it server-side),
 so ``list()`` caches the response for an hour. Lookups are explicit — the SDK
 never auto-validates your overrides against the cache; the server stays the
 source of truth.
+
+Model aliases (``{"provider": "alias", "model_name": "fast-default"}``) are not
+catalog entries and never appear here, so :meth:`Models.retrieve` will not
+resolve one. That is only a limit on lookup: because nothing is validated
+client-side, an alias passes through ``models=`` and cube stacks untouched and
+is resolved by the server at run time. See :class:`~cubic.types.CubeModel`.
 """
 
 from __future__ import annotations

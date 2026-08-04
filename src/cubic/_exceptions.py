@@ -83,6 +83,26 @@ class InvalidRequestError(CubicError):
     out-of-range parameters, or fields not applicable to a polycube)."""
 
 
+class ConflictError(CubicError):
+    """409 — the request was well-formed but conflicts with the current state.
+
+    Distinct from :class:`InvalidRequestError` in what you do about it: nothing
+    is wrong with what you sent, so retrying it verbatim will keep failing until
+    something else changes. Check ``error_code`` for which rule fired, e.g.:
+
+    ``already_listed``
+        The cube is already on the marketplace.
+    ``version_unchanged``
+        A publish whose draft matches the version it would replace.
+    ``alias_in_use``
+        A model alias still referenced by a cube — re-point those cubes first.
+    ``alias_repoint_conflict``
+        A model alias's new target can't do what a cube using it needs (web
+        search, structured output, the cube's output medium). The message names
+        every conflicting cube, so it is worth surfacing in full.
+    """
+
+
 class InsufficientCreditsError(CubicError):
     """The credit gate rejected the request. Not retryable — top up first."""
 

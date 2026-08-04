@@ -343,6 +343,29 @@ Useful for validating `models=` overrides before a run, populating model
 pickers, and estimating cost. Lookups are explicit — the SDK never
 auto-validates overrides against the cache; the server stays authoritative.
 
+### Model aliases
+
+A stack entry can name a **model alias** instead of a model — a name you manage
+in the dashboard under Setup → Models that points at a real model:
+
+```python
+client.cubes.create(
+    "Summariser",
+    user_prompt="Summarise {{doc}}",
+    models=[{"provider": "alias", "model_name": "fast-default", "rank": 0}],
+)
+```
+
+Cubic substitutes the target when the run starts, so re-pointing the alias
+switches every cube using it at once — no editing, no republishing. Results
+always report the model that actually ran, never the alias.
+
+Aliases are yours, not the catalog's: `models.list()` never returns one and
+`models.retrieve()` won't resolve one. That only limits lookup — since nothing
+is validated client-side, an alias passes through `models=` and cube stacks
+untouched. Naming one you don't have raises `InvalidRequestError` with
+`error_code="alias_not_found"`. Marketplace listings must be alias-free.
+
 ## Error handling
 
 The SDK never returns a silent failure: pipeline errors that the API reports
@@ -354,6 +377,7 @@ from cubic import (
     CubeNotFoundError,         # unknown ID, or not yours
     MissingVariableError,      # e.missing variable_name
     InvalidRequestError,       # bad parameters / polycube-inapplicable fields
+    ConflictError,             # 409 — valid request, conflicts with current state
     InsufficientCreditsError,  # e.required / e.balance / e.topup_allowed
     RateLimitError,            # capacity (auto-retried first)
     ProviderError,             # all model attempts failed; see e.attempt_errors

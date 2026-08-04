@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0 (2026-08-04)
+
+- New `ConflictError` for HTTP 409. Previously these fell through to the base
+  `CubicError`, so a conflict could only be told apart by reading
+  `.status_code`. Nothing breaks — it subclasses `CubicError`, so existing
+  handlers still catch it — but conflicts can now be handled by type:
+
+  ```python
+  from cubic import ConflictError
+
+  try:
+      client.cubes.create(...)
+  except ConflictError as e:
+      print(e.error_code)   # already_listed | version_unchanged | alias_in_use …
+  ```
+
+  A 409 means the request was well-formed but conflicts with current state, so
+  retrying it verbatim will keep failing until something else changes — which
+  is why it is deliberately not an `InvalidRequestError`.
+
+- Documented **model aliases** in the model catalog and cube-authoring docs. A
+  stack entry may be `{"provider": "alias", "model_name": "fast-default"}`,
+  naming an alias managed in the dashboard (Setup → Models) that points at a
+  real model; Cubic substitutes the target when the run starts, so re-pointing
+  it switches every cube using it without republishing.
+
+  No code change was needed — `provider` was already an open string and the SDK
+  has never validated model names client-side, so aliases have always passed
+  through. What was missing was any hint that they exist. `models.list()` /
+  `retrieve()` still cover the catalog only, which never contains aliases.
+
 ## 0.7.0 (2026-07-28)
 
 **Breaking:** `completions.create(attachments=[...])` is removed. Files are now

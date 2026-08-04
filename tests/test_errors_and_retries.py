@@ -153,6 +153,51 @@ def test_422_validation_list_is_flattened():
             )
 
 
+def test_409_maps_to_conflict_error():
+    """A 409 is well-formed but conflicts with server state — retrying the same
+    request verbatim will keep failing, which is why it is not an
+    InvalidRequestError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_envelope(
+            409,
+            "#fast-default is used by 2 cubes: cbe_aaaaaaaaaaaaaa, cbe_bbbbbbbbbbbbbb. "
+            "Point those at a model first.",
+            "alias_in_use",
+        )
+
+    with make_client(handler) as client:
+        with pytest.raises(cubic.ConflictError) as exc_info:
+            client.cubes.create("Doomed", user_prompt="hi")
+    assert exc_info.value.error_code == "alias_in_use"
+    assert exc_info.value.status_code == 409
+    # The conflict list is the fix instructions, so it must survive intact.
+    assert "cbe_bbbbbbbbbbbbbb" in exc_info.value.message
+    # Still catchable as the base class, so existing handlers keep working.
+    assert isinstance(exc_info.value, cubic.CubicError)
+    assert not isinstance(exc_info.value, cubic.InvalidRequestError)
+
+
+def test_alias_rows_pass_through_to_the_api_unvalidated():
+    """A model alias is not in the catalog, so the SDK must not try to resolve
+    it client-side — the server substitutes the target at run time."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = body_of(request)
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
+        client.completions.create(
+            "cbe_plaincube0001",
+            variables={},
+            models=[{"provider": "alias", "model_name": "fast-default", "rank": 0}],
+        )
+    assert seen["body"]["models"] == [
+        {"provider": "alias", "model_name": "fast-default", "rank": 0}
+    ]
+
+
 def test_504_deadline_maps_to_completion_timeout():
     body = cube_success_body(
         status="error",
