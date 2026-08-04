@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from .. import _exceptions as err
 from ..types import AttemptError, CompletionRecord, CompletionResult, PolycubeResult
-from .attachments import AttachmentInput, build_attachment_entries
+from .attachments import (
+    RETIRED_ATTACHMENTS_MESSAGE,
+    abind_file_variables,
+    bind_file_variables,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -36,13 +40,18 @@ CREATE_DOC = """Run a cube or polycube by its public ID.
         ``variables``, and ``client_request_id`` apply to plain cubes only;
         the API rejects them for polycubes.
 
-        ``attachments`` works for both kinds (a polycube delivers them to its
-        first cube). Each entry is an ``att_…`` id (from
-        ``client.attachments.upload``), an :class:`~cubic.types.Attachment`,
-        a :class:`~pathlib.Path`, or ``(filename, bytes)`` — the latter two
-        are sent inline. Every model in the cube's stack must accept
-        native-tier files (PDF/images) or the API rejects the run with 422
-        ``attachment_not_supported``.
+        Files are ordinary inputs: give a file-typed variable a
+        :class:`~pathlib.Path`, ``(filename, bytes)``, an
+        :class:`~cubic.types.Attachment`, or an ``att_…`` id, and the SDK
+        uploads it if needed::
+
+            client.completions.create(cube_id, {"contract": Path("lease.pdf")})
+
+        What happens to the file is the cube's prompt to decide — placed
+        directly, read as text with ``<<READ::{{contract}}>>``, transcribed with
+        ``<<TRANSCRIBE::{{contract}}>>``. When a file is placed directly, every
+        model in the cube's stack must accept it (PDF/images) or the API rejects
+        the run with 422 ``attachment_not_supported``.
 
         A ``client_request_id`` is attached automatically for plain cubes so
         transient failures can be retried without double-executing. When
@@ -61,6 +70,7 @@ def build_create_payload(
     variables: dict[str, Any] | list[dict[str, Any]] | None,
     *,
     version: int | None,
+    channel: str | None,
     history: list[dict[str, str]] | None,
     models: list[dict[str, Any]] | None,
     parameters: dict[str, Any] | None,
@@ -71,7 +81,6 @@ def build_create_payload(
     metadata: dict[str, Any] | None,
     client_request_id: str | uuid.UUID | None,
     known_polycube: bool,
-    attachments: list[AttachmentInput] | None = None,
 ) -> tuple[dict[str, Any], bool, str | None]:
     """Build the POST /v1/completions body.
 
@@ -87,6 +96,8 @@ def build_create_payload(
         payload["variables"] = variables
     if version is not None:
         payload["version_number"] = version
+    if channel is not None:
+        payload["channel"] = channel
     if history is not None:
         payload["history"] = history
     if models is not None:
@@ -103,10 +114,6 @@ def build_create_payload(
         payload["test_response_content"] = test_response_content
     if metadata is not None:
         payload["metadata"] = metadata
-    if attachments:
-        # Valid for both kinds (root-node delivery on polycubes), so it plays
-        # no part in the polycube-fallback retry decision below.
-        payload["attachments"] = build_attachment_entries(attachments)
     if client_request_id is not None:
         payload["client_request_id"] = str(client_request_id)
     elif auto_request_id is not None:
@@ -244,6 +251,7 @@ class Completions:
         variables: dict[str, Any] | list[dict[str, Any]] | None = None,
         *,
         version: int | None = None,
+        channel: str | None = None,
         history: list[dict[str, str]] | None = None,
         models: list[dict[str, Any]] | None = None,
         parameters: dict[str, Any] | None = None,
@@ -252,13 +260,17 @@ class Completions:
         test_mode: bool = False,
         test_response_content: str | dict[str, str] | None = None,
         metadata: dict[str, Any] | None = None,
-        attachments: list[AttachmentInput] | None = None,
+        attachments: Any = None,  # retired — see RETIRED_ATTACHMENTS_MESSAGE
         client_request_id: str | uuid.UUID | None = None,
     ) -> CompletionResult | PolycubeResult:
+        if attachments:
+            raise err.CubicError(RETIRED_ATTACHMENTS_MESSAGE)
+        variables = bind_file_variables(variables, self._client.attachments.upload)
         payload, caller_supplied_cube_only, auto_request_id = build_create_payload(
             cube_id,
             variables,
             version=version,
+            channel=channel,
             history=history,
             models=models,
             parameters=parameters,
@@ -269,7 +281,6 @@ class Completions:
             metadata=metadata,
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
-            attachments=attachments,
         )
         try:
             response = self._client.request(
@@ -338,6 +349,7 @@ class AsyncCompletions:
         variables: dict[str, Any] | list[dict[str, Any]] | None = None,
         *,
         version: int | None = None,
+        channel: str | None = None,
         history: list[dict[str, str]] | None = None,
         models: list[dict[str, Any]] | None = None,
         parameters: dict[str, Any] | None = None,
@@ -346,13 +358,17 @@ class AsyncCompletions:
         test_mode: bool = False,
         test_response_content: str | dict[str, str] | None = None,
         metadata: dict[str, Any] | None = None,
-        attachments: list[AttachmentInput] | None = None,
+        attachments: Any = None,  # retired — see RETIRED_ATTACHMENTS_MESSAGE
         client_request_id: str | uuid.UUID | None = None,
     ) -> CompletionResult | PolycubeResult:
+        if attachments:
+            raise err.CubicError(RETIRED_ATTACHMENTS_MESSAGE)
+        variables = await abind_file_variables(variables, self._client.attachments.upload)
         payload, caller_supplied_cube_only, auto_request_id = build_create_payload(
             cube_id,
             variables,
             version=version,
+            channel=channel,
             history=history,
             models=models,
             parameters=parameters,
@@ -363,7 +379,6 @@ class AsyncCompletions:
             metadata=metadata,
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
-            attachments=attachments,
         )
         try:
             response = await self._client.request(

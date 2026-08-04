@@ -51,34 +51,44 @@ result.is_partial         # cube delivered content but some fallbacks failed
 result.segments           # polycube only: per-node outputs, metrics, errors
 ```
 
-## Attachments
+## Files
 
-Attach files to a run — PDFs and images go to the model natively, MD/TXT/RTF/SVG
-are injected into the prompt as text, and Office files (DOCX/PPTX/XLSX) are
-text-extracted server-side. The real type is sniffed from the bytes; the total
-per run is capped at 50MB / 20 files.
+A file reaches a cube as the value of a **file-typed variable** — the cube
+declares `contract` as a file, and you pass one. What happens to it is the
+cube's prompt to decide: placed directly in the prompt (PDFs and images go to
+the model natively, MD/TXT/RTF/SVG as text), read with `<<READ::{{contract}}>>`
+for Office documents, or transcribed with `<<TRANSCRIBE::{{recording}}>>` for
+audio and video. The real type is sniffed from the bytes; a run is capped at
+50MB / 20 files.
 
 ```python
 from pathlib import Path
 
-# One-shot: pass files directly (sent inline with the request)
+# Pass the file as the variable's value — the SDK uploads it for you.
 result = client.completions.create(
     cube_id="cbe_...",
-    variables={"question": "What were Q4 margins?"},
-    attachments=[Path("q4-report.pdf"), ("notes.md", b"# context")],
+    variables={"contract": Path("q4-report.pdf"), "question": "What were Q4 margins?"},
 )
 
-# Reusable: upload once, reference the att_… id across runs for 7 days.
-# Office files are extracted once per attachment, so re-runs are cheaper.
+# Or upload once and reuse the att_… id across runs for 7 days. A document a
+# cube READs is converted — and charged — once, so re-runs are cheaper.
 att = client.attachments.upload("q4-report.pdf")
-att.tier                  # "native" | "text" | "extraction" — how it will be handled
-result = client.completions.create(cube_id="cbe_...", attachments=[att])
+att.tier                  # "native" | "text" | "extraction" | "audio"
+result = client.completions.create(cube_id="cbe_...", variables={"contract": att})
 ```
 
-Native-tier files (PDF/images) require every model in the cube's stack to
-support that input type — incompatible stacks are rejected with a 422
-(`attachment_not_supported`) before any spend. Polycubes accept attachments
-too: they're delivered to the chain's first cube.
+A variable's value may be a `Path`, `(filename, bytes)`, an `Attachment`, or an
+`att_…` id. A plain string is never treated as a file — it is the variable's
+text — so nothing is uploaded by accident.
+
+A file placed *directly* in the prompt requires every model in the cube's stack
+to accept that input type; incompatible stacks are rejected with a 422
+(`attachment_not_supported`) before any spend. A file handed to a marker needs
+no such support: it reaches the model as text.
+
+> **Migrating from 0.6.x:** the `attachments=[…]` argument is gone. Declare a
+> file variable on the cube and pass the file as that variable's value; the SDK
+> raises a `CubicError` with this instruction if the old argument is used.
 
 ## Binary outputs (Binary Cubes)
 
@@ -220,6 +230,38 @@ cube = client.cubes.create(
 )
 # cube.cube_id → "cbe_…", version 1 / "1.0.0", immediately runnable
 ```
+
+### Declaring inputs
+
+Every `{{placeholder}}` in the content becomes an input automatically, typed as
+a required string. Declare `variables` only where you want something else — a
+different type, an optional input, or a description that ships with the cube:
+
+```python
+from cubic import variable
+
+cube = client.cubes.create(
+    "Contract reviewer",
+    user_prompt="Review {{contract}} focusing on {{focus}}. Reply in {{language}}.",
+    models=[{"provider": "openai", "model_name": "gpt-4o-mini", "rank": 0}],
+    variables={
+        "contract": variable("file", description="The signed agreement"),
+        "focus": variable(required=False),
+        # "language" is left undeclared → required string
+    },
+)
+```
+
+Types are `string` (default), `integer`, `float`, `boolean` and `file`.
+`variable()` just builds the dict — `{"type": "file", "required": True}` works
+too. Declarations are versioned content, so changing one goes through
+`create_version` (not `update`, which covers prompt-level settings), and `test`
+accepts them for trying a declaration before committing it.
+
+**`file` is what lets a variable take a file.** Passing an `att_…` id to any
+other variable is rejected (`undeclared_file_variable`) rather than
+dereferenced — variables routinely carry text from your own end users, so a
+value can't promote itself into a file reference.
 
 Iterate wording at zero version cost — `test` runs synchronously, bypasses any
 callback URL, and never saves:

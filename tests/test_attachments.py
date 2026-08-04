@@ -1,8 +1,7 @@
-"""Attachments: upload/retrieve/delete, and attachments= on completions.create."""
+"""Attachments: upload/retrieve/delete, and files bound to file-typed variables."""
 
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -81,38 +80,105 @@ def test_retrieve_and_delete(request_log):
     assert request_log[1].url.path == "/v1/attachments/att_a1B2c3D4e5F6g7"
 
 
-# ---- completions.create wiring -------------------------------------------------
+# ---- files as variable values ---------------------------------------------------
 
 
-def test_create_passes_ids_and_inlines_files(tmp_path, request_log):
+def test_path_variable_is_uploaded_and_bound(tmp_path, request_log):
+    """A file-typed variable takes a file directly; the SDK uploads it and sends
+    the id, so callers hand a cube a file the way they hand it a string."""
     f = tmp_path / "context.md"
     f.write_bytes(b"# context")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        if request.url.path == "/v1/attachments":
+            return httpx.Response(201, json=attachment_body(filename="context.md", tier="text"))
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
+        client.completions.create("cbe_a1B2c3D4e5F6g7", {"notes": f, "tone": "brisk"})
+
+    assert request_log[0].url.path == "/v1/attachments"
+    sent = body_of(request_log[1])["variables"]
+    assert sent == {"notes": "att_a1B2c3D4e5F6g7", "tone": "brisk"}
+
+
+def test_bytes_tuple_variable_is_uploaded(tmp_path, request_log):
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        if request.url.path == "/v1/attachments":
+            return httpx.Response(201, json=attachment_body(id="att_ZZZZZZZZZZZZZZ"))
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
+        client.completions.create("cbe_a1B2c3D4e5F6g7", {"doc": ("inline.txt", b"hello")})
+
+    assert b'filename="inline.txt"' in request_log[0].content
+    assert body_of(request_log[1])["variables"] == {"doc": "att_ZZZZZZZZZZZZZZ"}
+
+
+def test_already_uploaded_file_is_not_re_uploaded(request_log):
+    """An Attachment (or its id) is reused as-is — re-running with the same
+    document costs no second upload."""
+    att = Attachment.model_validate(attachment_body())
 
     def handler(request: httpx.Request) -> httpx.Response:
         request_log.append(request)
         return httpx.Response(200, json=cube_success_body())
 
     with make_client(handler) as client:
+        client.completions.create("cbe_a1B2c3D4e5F6g7", {"a": att, "b": att.id})
+
+    assert [r.url.path for r in request_log] == ["/v1/completions"]
+    assert body_of(request_log[0])["variables"] == {"a": att.id, "b": att.id}
+
+
+def test_plain_strings_are_never_treated_as_files(request_log):
+    """A string is the variable's text, never a filename — nothing is uploaded
+    by accident."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
+        client.completions.create("cbe_a1B2c3D4e5F6g7", {"topic": "report.pdf"})
+
+    assert [r.url.path for r in request_log] == ["/v1/completions"]
+    assert body_of(request_log[0])["variables"] == {"topic": "report.pdf"}
+
+
+def test_batch_items_bind_their_own_files(tmp_path, request_log):
+    a = tmp_path / "a.md"
+    a.write_bytes(b"# a")
+    uploaded = iter(["att_AAAAAAAAAAAAAA", "att_BBBBBBBBBBBBBB"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        if request.url.path == "/v1/attachments":
+            return httpx.Response(201, json=attachment_body(id=next(uploaded)))
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
         client.completions.create(
             "cbe_a1B2c3D4e5F6g7",
-            attachments=[
-                "att_a1B2c3D4e5F6g7",
-                Attachment.model_validate(attachment_body(id="att_ZZZZZZZZZZZZZZ")),
-                f,
-                ("inline.txt", b"hello"),
+            [
+                {"id": "1", "variables": {"doc": a}},
+                {"id": "2", "variables": {"doc": ("b.md", b"# b")}},
             ],
         )
-    sent = body_of(request_log[0])["attachments"]
-    assert sent[0] == "att_a1B2c3D4e5F6g7"
-    assert sent[1] == "att_ZZZZZZZZZZZZZZ"
-    assert sent[2] == {"filename": "context.md", "data": base64.b64encode(b"# context").decode()}
-    assert sent[3] == {"filename": "inline.txt", "data": base64.b64encode(b"hello").decode()}
+
+    sent = body_of(request_log[-1])["variables"]
+    assert [item["variables"]["doc"] for item in sent] == [
+        "att_AAAAAAAAAAAAAA",
+        "att_BBBBBBBBBBBBBB",
+    ]
 
 
-def test_create_rejects_non_id_string():
+def test_retired_attachments_argument_explains_the_migration():
     with make_client(lambda r: httpx.Response(200, json=cube_success_body())) as client:
-        with pytest.raises(CubicError, match="pathlib.Path"):
-            client.completions.create("cbe_a1B2c3D4e5F6g7", attachments=["report.pdf"])
+        with pytest.raises(CubicError, match="file variable"):
+            client.completions.create("cbe_a1B2c3D4e5F6g7", attachments=["att_a1B2c3D4e5F6g7"])
 
 
 def test_create_omits_attachments_when_absent(request_log):
@@ -125,8 +191,9 @@ def test_create_omits_attachments_when_absent(request_log):
     assert "attachments" not in body_of(request_log[0])
 
 
-def test_attachments_survive_polycube_retry(request_log):
-    """The polycube 422-retry drops client_request_id but keeps attachments."""
+def test_bound_files_survive_the_polycube_retry(request_log):
+    """The polycube 422-retry drops client_request_id but keeps the variables —
+    including their bound file ids, so the file isn't uploaded twice."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         request_log.append(request)
@@ -159,20 +226,20 @@ def test_attachments_survive_polycube_retry(request_log):
 
     with make_client(handler) as client:
         result = client.completions.create(
-            "cbe_a1B2c3D4e5F6g7", attachments=["att_a1B2c3D4e5F6g7"]
+            "cbe_a1B2c3D4e5F6g7", {"doc": "att_a1B2c3D4e5F6g7"}
         )
     assert result.content == "done"
     assert len(request_log) == 2
     retry = body_of(request_log[1])
     assert "client_request_id" not in retry
-    assert retry["attachments"] == ["att_a1B2c3D4e5F6g7"]
+    assert retry["variables"] == {"doc": "att_a1B2c3D4e5F6g7"}
 
 
 # ---- async parity ---------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_async_upload_and_create(tmp_path, request_log):
+async def test_async_upload_and_bind(tmp_path, request_log):
     f = tmp_path / "doc.pdf"
     f.write_bytes(b"%PDF-1.7")
 
@@ -183,6 +250,12 @@ async def test_async_upload_and_create(tmp_path, request_log):
         return httpx.Response(200, json=cube_success_body())
 
     async with make_async_client(handler) as client:
+        # An explicit upload, then reuse by object.
         att = await client.attachments.upload(f)
-        await client.completions.create("cbe_a1B2c3D4e5F6g7", attachments=[att])
-    assert body_of(request_log[1])["attachments"] == [att.id]
+        await client.completions.create("cbe_a1B2c3D4e5F6g7", {"contract": att})
+        # And the one-step form: the path is uploaded for you.
+        await client.completions.create("cbe_a1B2c3D4e5F6g7", {"contract": f})
+
+    assert body_of(request_log[1])["variables"] == {"contract": att.id}
+    assert request_log[2].url.path == "/v1/attachments"
+    assert body_of(request_log[3])["variables"] == {"contract": att.id}

@@ -42,9 +42,13 @@ from .resources.files import DownloadedFile
 from .types import (
     Attachment,
     AttemptError,
+    BumpReason,
+    Channel,
+    ChangelogEvent,
     CompletionRecord,
     CompletionResult,
     Cube,
+    CubeDraft,
     CubeModel,
     CubeVersion,
     GeneratedFile,
@@ -58,6 +62,8 @@ from .types import (
     Project,
     Segment,
     SingleCompletion,
+    VariableType,
+    variable,
 )
 
 __all__ = [
@@ -88,6 +94,8 @@ __all__ = [
     "WebhookSignatureError",
     # types
     "Attachment",
+    "variable",
+    "VariableType",
     "GeneratedFile",
     "DownloadedFile",
     "AttemptError",
@@ -98,8 +106,12 @@ __all__ = [
     "Segment",
     "CompletionRecord",
     "Cube",
+    "CubeDraft",
     "CubeModel",
     "CubeVersion",
+    "Channel",
+    "ChangelogEvent",
+    "BumpReason",
     "Model",
     "Project",
     "Polycube",

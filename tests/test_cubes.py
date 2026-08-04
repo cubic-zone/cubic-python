@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 import cubic
-from conftest import error_envelope, make_client
+from conftest import body_of, error_envelope, make_client
 
 CUBE_BODY = {
     "cube_id": "cbe_plaincube0001",
@@ -260,3 +260,73 @@ async def test_async_create_and_version(request_log):
     assert cube.cube_id == "cbe_plaincube0001"
     assert v.version == "1.0.1"
     assert request_log[0].headers.get("Idempotency-Key")
+
+
+# ---- variable declarations ------------------------------------------------------
+
+
+def test_variable_helper_builds_declarations():
+    from cubic import variable
+
+    assert variable() == {"type": "string", "required": True}
+    assert variable("file", description="The signed agreement") == {
+        "type": "file",
+        "required": True,
+        "description": "The signed agreement",
+    }
+    assert variable("integer", required=False) == {"type": "integer", "required": False}
+
+
+def test_create_sends_variable_declarations(request_log):
+    from cubic import variable
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(201, json=CUBE_BODY)
+
+    with make_client(handler) as client:
+        client.cubes.create(
+            "Contract reviewer",
+            user_prompt="Review {{contract}} for {{focus}}",
+            variables={
+                "contract": variable("file", description="The signed agreement"),
+                "focus": variable(required=False),
+            },
+        )
+
+    sent = body_of(request_log[0])["variables"]
+    assert sent["contract"]["type"] == "file"
+    assert sent["focus"]["required"] is False
+
+
+def test_create_version_sends_variable_declarations(request_log):
+    """Declarations are versioned content, so they travel with create_version —
+    not update, which is prompt-level only."""
+    from cubic import variable
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(201, json=VERSION_BODY)
+
+    with make_client(handler) as client:
+        client.cubes.create_version(
+            "cbe_a1B2c3D4e5F6g7",
+            user_prompt="Review {{contract}}",
+            variables={"contract": variable("file")},
+        )
+
+    assert body_of(request_log[0])["variables"] == {"contract": {"type": "file", "required": True}}
+
+
+def test_variables_omitted_when_not_declared(request_log):
+    """Undeclared placeholders are auto-detected server-side, so the SDK sends
+    nothing rather than an empty schema that would look like 'no inputs'."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(201, json=CUBE_BODY)
+
+    with make_client(handler) as client:
+        client.cubes.create("Plain", user_prompt="Hello {{name}}")
+
+    assert "variables" not in body_of(request_log[0])

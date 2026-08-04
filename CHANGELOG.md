@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.7.0 (2026-07-28)
+
+**Breaking:** `completions.create(attachments=[...])` is removed. Files are now
+ordinary inputs — declare a variable of type `file` on the cube and pass the
+file as that variable's value:
+
+```python
+client.completions.create(cube_id, {"contract": Path("lease.pdf")})
+```
+
+A value may be a `Path`, `(filename, bytes)`, an `Attachment`, or an `att_…` id;
+paths and byte tuples are uploaded automatically, and an `Attachment`/id is
+reused as-is (no second upload). Plain strings are never treated as files.
+Batch items each bind their own. Passing `attachments=` raises a `CubicError`
+explaining the migration rather than failing at the API.
+
+New `cubic.variable()` helper for declaring a cube's inputs when authoring:
+
+```python
+client.cubes.create(
+    "Contract reviewer",
+    user_prompt="Review {{contract}} for {{focus}}",
+    variables={
+        "contract": variable("file", description="The signed agreement"),
+        "focus": variable(required=False),
+    },
+)
+```
+
+`variables=` was already accepted by `cubes.create` / `create_version` / `test`
+but undocumented and untyped; it now has a builder, a `VariableType` alias, and
+docs in both the docstrings and the README. Undeclared `{{placeholders}}` still
+default to required strings, so declare only what differs.
+
+Why the file change: the prompt now decides what happens to a file, which the old
+attachments list couldn't express — bare `{{contract}}` places it,
+`<<READ::{{contract}}>>` reads it as text, `<<TRANSCRIBE::{{recording}}>>`
+transcribes audio or video (a newly supported type).
+
 ## 0.6.0 (2026-07-24)
 
 - Binary outputs (Binary Cubes): `result.file` / `result.files` return

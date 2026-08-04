@@ -319,20 +319,98 @@ class CubeModel(_Model):
     role: str
 
 
-class CubeVersion(_Model):
-    """One saved version of a cube's content.
+class BumpReason(_Model):
+    """One rule that fired when the server sized the semantic bump.
 
-    ``version_number`` is the internal monotonic sequence (pin/rollback by it);
-    ``version`` is the human-facing semantic label the server sizes to the
-    content delta (``change_ratio``: 0 = identical to the previous version,
-    1 = fully different).
+    ``rule`` is stable and machine-readable (``rank0_model_changed``,
+    ``schema_field_removed``, …); ``message`` is the human sentence.
+    """
+
+    rule: str
+    level: str  # major | minor | patch
+    message: str
+    detail: dict[str, Any] = {}
+
+
+class CubeVersion(_Model):
+    """One published version — an immutable snapshot of content AND config.
+
+    ``version_number`` is the internal monotonic sequence (pin by it);
+    ``version`` is the human-facing semantic label the server sizes to the whole
+    delta, content *and* config. ``bump_reason`` lists every rule that produced
+    it, so a major is never an unexplained number.
+
+    ``channels`` are the named pointers aimed here right now — ``["production"]``
+    means this is what an unqualified completion runs.
     """
 
     version_number: int
     version: str
     change_ratio: float | None = None
     is_current: bool = False
+    channels: list[str] = []
+    change_note: str | None = None
+    change_note_source: str = "none"  # human | generated | none
+    author: str | None = None
+    bump_reason: list[BumpReason] = []
+    # True for versions predating config versioning: the config recorded is
+    # today's, not necessarily what ran at the time.
+    config_backfilled: bool = False
     created_at: datetime | None = None
+
+
+class Channel(_Model):
+    """A named, movable pointer from a cube to a version.
+
+    What Langfuse and PromptLayer call a *label* and Agenta, Helicone and
+    Braintrust call an *environment*. ``production`` exists on every cube and is
+    what a completion resolves to by default; ``latest`` is reserved
+    (``reserved=True``), always the highest version, and cannot be moved.
+    """
+
+    name: str
+    version_number: int
+    semantic_label: str | None = None
+    protected: bool = False
+    reserved: bool = False
+    updated_at: datetime | None = None
+
+
+class ChangelogEvent(_Model):
+    """One entry on a cube's timeline, or the account-wide feed.
+
+    ``event_type`` is one of ``version.published``, ``channel.created``,
+    ``channel.moved``, ``channel.deleted``, ``version.rolled_back``. A rollback
+    names the version that was **pulled** and how long it served.
+    """
+
+    id: int
+    event_type: str
+    entity_type: str
+    entity_id: str
+    project_id: str | None = None
+    actor_name: str | None = None
+    payload: dict[str, Any] = {}
+    created_at: datetime | None = None
+
+
+class CubeDraft(_Model):
+    """Staged, unpublished changes to a cube.
+
+    Nothing here serves traffic. ``bump`` is what publishing would produce —
+    ``bump["level"]`` and ``bump["next_label"]`` — computed without publishing.
+    """
+
+    prompt_id: str
+    has_draft: bool = False
+    base_version_number: int | None = None
+    # True when someone published while this draft was open.
+    base_is_stale: bool = False
+    content: dict[str, Any] = {}
+    config: dict[str, Any] = {}
+    changed_fields: list[str] = []
+    bump: dict[str, Any] = {}
+    updated_at: datetime | None = None
 
 
 class Attachment(_Model):
@@ -439,3 +517,39 @@ class Cube(_Model):
     response_format: dict | None = None
     response_format_source: str = "none"
     models: list[CubeModel] = []
+    # True when an ``update`` landed on your draft rather than applying live.
+    # The definition above is still the PUBLISHED one — read ``cubes.draft()``
+    # to see what is staged, and ``cubes.publish()`` to ship it.
+    draft_pending: bool = False
+    draft_changed_fields: list[str] = []
+
+
+VariableType = Literal["string", "integer", "float", "boolean", "file"]
+
+
+def variable(
+    type: VariableType = "string",
+    *,
+    required: bool = True,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Declare one of a cube's inputs, for ``variables=`` on ``cubes.create`` /
+    ``create_version`` / ``test``.
+
+    ::
+
+        variables={
+            "contract": variable("file", description="The signed agreement"),
+            "focus": variable(required=False),
+        }
+
+    A name you never declare is auto-detected from the ``{{placeholders}}`` in
+    the content and defaults to a required string, so you only declare what
+    differs. Declaring ``"file"`` is what lets a variable take an uploaded file:
+    an ``att_`` id in any other variable is rejected rather than dereferenced,
+    since variables routinely carry text from your own end users.
+    """
+    declaration: dict[str, Any] = {"type": type, "required": required}
+    if description is not None:
+        declaration["description"] = description
+    return declaration

@@ -80,6 +80,46 @@ def build_polycube_payload(
     return payload
 
 
+STATUS_DOC = """Whether the canvas has changes the published version doesn't have.
+
+        The canvas is the working copy: saving stores the graph, publishing
+        decides what callers resolve. ``has_unpublished`` is False when they
+        match; ``level`` and ``reasons`` say what publishing would do.
+        """
+
+PUBLISH_DOC = """Publish the current graph as an immutable version.
+
+        Node bindings are preserved exactly — a **floating** node stays floating
+        in every version. What each floating node resolved to at publish time is
+        returned in ``resolution`` for forensics; it is not a pin, and the node
+        keeps following its cube.
+
+        Moving a node on the canvas is not a version. Bumps: **major** for a node
+        or edge removed or a node's cube swapped, **minor** for a node or edge
+        added or a node rebound, **patch** for the callback URL.
+
+        Raises :class:`~cubic.CubicError` with ``version_unchanged`` when nothing
+        behaviour-bearing differs.
+        """
+
+VERSIONS_DOC = """Graph history, newest first — bump reasons, channels, node and
+        edge counts, and each version's resolution manifest."""
+
+CHANNELS_DOC = """Named pointers to graph versions. ``production`` is what an
+        unqualified completion resolves to; ``latest`` is reserved."""
+
+SET_CHANNEL_DOC = """Promote or roll back a graph. A move to a LOWER version is a
+        rollback and is recorded as one, naming the version pulled and how long it
+        served. Pass a ``reason`` — it is what anyone reading the timeline wants."""
+
+CHANGELOG_DOC = """This polycube's timeline.
+
+        Includes ``polycube.upstream_drift``: a **floating** node's cube published
+        a new version, so what this graph runs just changed even though the graph
+        itself did not. Pinned nodes never drift, by definition.
+        """
+
+
 class Polycubes:
     def __init__(self, client: "Cubic") -> None:
         self._client = client
@@ -141,9 +181,61 @@ class Polycubes:
         )
         return Polycube.model_validate(response.json())
 
+    def status(self, polycube_id: str) -> dict[str, Any]:
+        response = self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/status", idempotent=True
+        )
+        return response.json()
+
+    def publish(
+        self, polycube_id: str, *, change_note: str | None = None,
+        bump_override: str | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.request(
+            "POST",
+            f"/v1/polycubes/{polycube_id}/versions",
+            json_body={"change_note": change_note, "bump_override": bump_override},
+        )
+        return response.json()
+
+    def versions(self, polycube_id: str) -> list[dict[str, Any]]:
+        response = self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/versions", idempotent=True
+        )
+        return response.json()
+
+    def channels(self, polycube_id: str) -> list[dict[str, Any]]:
+        response = self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/channels", idempotent=True
+        )
+        return response.json()
+
+    def set_channel(
+        self, polycube_id: str, name: str, version_number: int, *, reason: str | None = None
+    ) -> dict[str, Any]:
+        response = self._client.request(
+            "PUT",
+            f"/v1/polycubes/{polycube_id}/channels/{name}",
+            json_body={"version_number": version_number, "reason": reason},
+            idempotent=True,
+        )
+        return response.json()
+
+    def changelog(self, polycube_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        response = self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/changelog?limit={limit}", idempotent=True
+        )
+        return response.json()
+
     create.__doc__ = CREATE_DOC
     retrieve.__doc__ = RETRIEVE_DOC
     update.__doc__ = UPDATE_DOC
+    status.__doc__ = STATUS_DOC
+    publish.__doc__ = PUBLISH_DOC
+    versions.__doc__ = VERSIONS_DOC
+    channels.__doc__ = CHANNELS_DOC
+    set_channel.__doc__ = SET_CHANNEL_DOC
+    changelog.__doc__ = CHANGELOG_DOC
 
 
 class AsyncPolycubes:
@@ -207,6 +299,58 @@ class AsyncPolycubes:
         )
         return Polycube.model_validate(response.json())
 
+    async def status(self, polycube_id: str) -> dict[str, Any]:
+        response = await self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/status", idempotent=True
+        )
+        return response.json()
+
+    async def publish(
+        self, polycube_id: str, *, change_note: str | None = None,
+        bump_override: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self._client.request(
+            "POST",
+            f"/v1/polycubes/{polycube_id}/versions",
+            json_body={"change_note": change_note, "bump_override": bump_override},
+        )
+        return response.json()
+
+    async def versions(self, polycube_id: str) -> list[dict[str, Any]]:
+        response = await self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/versions", idempotent=True
+        )
+        return response.json()
+
+    async def channels(self, polycube_id: str) -> list[dict[str, Any]]:
+        response = await self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/channels", idempotent=True
+        )
+        return response.json()
+
+    async def set_channel(
+        self, polycube_id: str, name: str, version_number: int, *, reason: str | None = None
+    ) -> dict[str, Any]:
+        response = await self._client.request(
+            "PUT",
+            f"/v1/polycubes/{polycube_id}/channels/{name}",
+            json_body={"version_number": version_number, "reason": reason},
+            idempotent=True,
+        )
+        return response.json()
+
+    async def changelog(self, polycube_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        response = await self._client.request(
+            "GET", f"/v1/polycubes/{polycube_id}/changelog?limit={limit}", idempotent=True
+        )
+        return response.json()
+
     create.__doc__ = CREATE_DOC
     retrieve.__doc__ = RETRIEVE_DOC
     update.__doc__ = UPDATE_DOC
+    status.__doc__ = STATUS_DOC
+    publish.__doc__ = PUBLISH_DOC
+    versions.__doc__ = VERSIONS_DOC
+    channels.__doc__ = CHANNELS_DOC
+    set_channel.__doc__ = SET_CHANNEL_DOC
+    changelog.__doc__ = CHANGELOG_DOC
