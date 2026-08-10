@@ -7,13 +7,20 @@ error-mapping logic below; the resource classes are thin transport bindings.
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable
 
 from .. import _exceptions as err
-from ..types import AttemptError, CompletionRecord, CompletionResult, PolycubeResult
+from ..types import (
+    AttemptError,
+    CompletionRecord,
+    CompletionResult,
+    PolycubeResult,
+    RenderedPrompt,
+)
 from .attachments import (
     RETIRED_ATTACHMENTS_MESSAGE,
     abind_file_variables,
@@ -247,9 +254,383 @@ WAIT_DOC = """Poll until the completion's persisted result is available.
         """
 
 
+def extract_usage(usage: Any) -> dict[str, int | None]:
+    """Token counts from a provider's usage object, whatever shape it came in.
+
+    OpenAI reports ``prompt_tokens``/``completion_tokens``; Anthropic reports
+    ``input_tokens``/``output_tokens``. Mapping them here rather than server-side
+    is deliberate: a provider changing its response shape should cost a client
+    upgrade, not a Cubic incident. Dicts and objects both work, and anything
+    unrecognised yields ``None`` — unknown, never a silent zero.
+    """
+    if usage is None:
+        return {"input_tokens": None, "output_tokens": None}
+
+    def field(*names: str) -> int | None:
+        for name in names:
+            value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+            if isinstance(value, int):
+                return value
+        return None
+
+    return {
+        "input_tokens": field("input_tokens", "prompt_tokens"),
+        "output_tokens": field("output_tokens", "completion_tokens"),
+    }
+
+
+def build_render_payload(cube_id: str, variables, **kwargs) -> dict[str, Any]:
+    """Render shares the completion request body, minus what execution owns."""
+    payload: dict[str, Any] = {"prompt_id": cube_id}
+    if variables is not None:
+        payload["variables"] = variables
+    for key in ("version_number", "channel", "history", "models", "parameters", "metadata"):
+        value = kwargs.get(key)
+        if value is not None:
+            payload[key] = value
+    if kwargs.get("test_mode"):
+        payload["test_mode"] = True
+    return payload
+
+
+def build_attach_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Scalar form for one unbatched item, ``items`` for everything else — the
+    shape the API validates as mutually exclusive."""
+    if len(items) == 1 and items[0].get("batch_item_id") is None:
+        return {k: v for k, v in items[0].items() if k != "batch_item_id" and v is not None} or {
+            "output": items[0].get("output")
+        }
+    return {"items": items}
+
+
+class _ExternalRun:
+    """The object a ``completions.external(...)`` block yields.
+
+    Set ``output`` (and optionally ``usage``) and the enclosing block attaches on
+    exit. If the block raises, it attaches the failure instead and re-raises —
+    that automatic capture is the whole reason this is a context manager rather
+    than two calls, because a hand-rolled try/finally is what everyone forgets.
+    """
+
+    def __init__(self, rendered, attach: Callable[..., Any]) -> None:
+        self.rendered = rendered
+        self._attach = attach
+        self.output: Any = None
+        self.usage: Any = None
+        self.input_tokens: int | None = None
+        self.output_tokens: int | None = None
+        self.provider: str | None = rendered.provider
+        self.model_name: str | None = rendered.model_name
+        self.response_time_ms: int | None = None
+        self.items: list[_ExternalItem] = [
+            _ExternalItem(r, rendered) for r in rendered.renders if r.batch_item_id is not None
+        ]
+
+    # Reading the prompt reads through to the render.
+    @property
+    def messages(self) -> list[dict]:
+        return self.rendered.messages
+
+    @property
+    def user_prompt(self) -> str:
+        return self.rendered.user_prompt
+
+    @property
+    def system_instructions(self) -> str | None:
+        return self.rendered.system_instructions
+
+    @property
+    def response_format(self) -> dict | None:
+        return self.rendered.response_format
+
+    @property
+    def completion_id(self) -> str:
+        return self.rendered.completion_id
+
+    def __iter__(self):
+        """Batch renders iterate; a scalar one has nothing to iterate over."""
+        if not self.items:
+            raise TypeError(
+                "This is a scalar render — set `run.output` directly instead of iterating"
+            )
+        return iter(self.items)
+
+    def _payload_items(self, error: BaseException | None) -> list[dict[str, Any]]:
+        if error is not None:
+            message = f"{type(error).__name__}: {error}"
+            if self.items:
+                return [
+                    {"batch_item_id": i.batch_item_id, "status": "error", "error": message}
+                    for i in self.items
+                ]
+            return [{"status": "error", "error": message}]
+        if self.items:
+            return [i._payload() for i in self.items]
+        tokens = extract_usage(self.usage)
+        return [
+            {
+                "batch_item_id": None,
+                "output": self.output,
+                "provider": self.provider,
+                "model_name": self.model_name,
+                "input_tokens": (
+                    self.input_tokens if self.input_tokens is not None else tokens["input_tokens"]
+                ),
+                "output_tokens": (
+                    self.output_tokens
+                    if self.output_tokens is not None
+                    else tokens["output_tokens"]
+                ),
+                "response_time_ms": self.response_time_ms,
+                "status": "success",
+            }
+        ]
+
+
+class _ExternalItem:
+    """One item of a batch render inside an ``external`` block."""
+
+    def __init__(self, item, rendered) -> None:
+        self._item = item
+        self.batch_item_id = item.batch_item_id
+        self.output: Any = None
+        self.usage: Any = None
+        self.input_tokens: int | None = None
+        self.output_tokens: int | None = None
+        self.provider: str | None = rendered.provider
+        self.model_name: str | None = rendered.model_name
+        self.response_time_ms: int | None = None
+
+    @property
+    def messages(self) -> list[dict]:
+        return self._item.messages
+
+    @property
+    def user_prompt(self) -> str:
+        return self._item.user_prompt
+
+    @property
+    def system_instructions(self) -> str | None:
+        return self._item.system_instructions
+
+    def _payload(self) -> dict[str, Any]:
+        tokens = extract_usage(self.usage)
+        return {
+            "batch_item_id": self.batch_item_id,
+            "output": self.output,
+            "provider": self.provider,
+            "model_name": self.model_name,
+            "input_tokens": (
+                self.input_tokens if self.input_tokens is not None else tokens["input_tokens"]
+            ),
+            "output_tokens": (
+                self.output_tokens if self.output_tokens is not None else tokens["output_tokens"]
+            ),
+            "response_time_ms": self.response_time_ms,
+            "status": "success",
+        }
+
+
+class _ExternalContext:
+    """Sync ``with`` wrapper around a render + attach pair."""
+
+    def __init__(self, render: Callable[[], Any], attach: Callable[..., Any]) -> None:
+        self._render = render
+        self._attach = attach
+        self._run: _ExternalRun | None = None
+
+    def __enter__(self) -> _ExternalRun:
+        self._run = _ExternalRun(self._render(), self._attach)
+        return self._run
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        run = self._run
+        if run is None:  # pragma: no cover - __enter__ always sets it
+            return False
+        self._attach(run.completion_id, run._payload_items(exc))
+        return False  # never swallow: the caller's exception is theirs to see
+
+
+class _AsyncExternalContext:
+    """``async with`` twin of :class:`_ExternalContext`."""
+
+    def __init__(self, render, attach) -> None:
+        self._render = render
+        self._attach = attach
+        self._run: _ExternalRun | None = None
+
+    async def __aenter__(self) -> _ExternalRun:
+        self._run = _ExternalRun(await self._render(), self._attach)
+        return self._run
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        run = self._run
+        if run is None:  # pragma: no cover
+            return False
+        await self._attach(run.completion_id, run._payload_items(exc))
+        return False
+
+
+EXTERNAL_DOC = """Render a cube's prompt, run it yourself, and post the result back.
+
+        For using Cubic's prompt management with your own inference. The block
+        yields the rendered prompt plus the model stack and schema needed to
+        reproduce the call; set ``output`` and it is attached on exit, so the run
+        still lands in Logs, Usage and per-version outcomes::
+
+            with client.completions.external(cube_id, {"inquiry": text}) as run:
+                resp = openai.chat.completions.create(
+                    model=run.model_name, messages=run.messages
+                )
+                run.output = resp.choices[0].message.content
+                run.usage = resp.usage      # tokens mapped for you
+
+        If the block raises, the failure is attached and re-raised, so external
+        error rates stay visible instead of looking like runs nobody finished.
+
+        A batch render iterates instead, and attaches every item in one call::
+
+            with client.completions.external(cube_id, [{"id": "a", ...}]) as batch:
+                for item in batch:
+                    item.output = run_your_model(item.messages)
+
+        Rendering is billed for what it consumed — function markers, resources
+        and nested cubes all still execute — but the attach itself is free.
+        Requires a paid plan, and is refused for marketplace cubes you don't own
+        and for polycubes.
+        """
+
+
 class Completions:
     def __init__(self, client: "Cubic") -> None:
         self._client = client
+
+    def render(
+        self,
+        cube_id: str,
+        variables: dict[str, Any] | list[dict[str, Any]] | None = None,
+        *,
+        version: int | None = None,
+        channel: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        models: list[dict[str, Any]] | None = None,
+        parameters: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        test_mode: bool = False,
+    ) -> RenderedPrompt:
+        """The cube's prompt, substituted and ready to run, without running it.
+
+        Returns a ``completion_id`` you can attach a result to. To read the
+        prompt as *written* — unsubstituted, free, no record — use
+        ``client.cubes.retrieve()`` instead.
+        """
+        variables = bind_file_variables(variables, self._client.attachments.upload)
+        payload = build_render_payload(
+            cube_id,
+            variables,
+            version_number=version,
+            channel=channel,
+            history=history,
+            models=models,
+            parameters=parameters,
+            metadata=metadata,
+            test_mode=test_mode,
+        )
+        response = self._client.request("POST", "/v1/completions/render", json_body=payload)
+        return RenderedPrompt.model_validate(response.json())
+
+    def attach(
+        self,
+        completion_id: str | uuid.UUID,
+        items: list[dict[str, Any]] | None = None,
+        *,
+        output: Any = None,
+        provider: str | None = None,
+        model_name: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        usage: Any = None,
+        response_time_ms: int | None = None,
+        status: str = "success",
+        error: str | None = None,
+    ) -> CompletionRecord:
+        """Post back the result of a render you executed yourself.
+
+        Free — the run was billed at render. Supply ``provider``/``model_name``
+        and token counts (or a provider ``usage`` object) and Cubic prices the
+        call from its model catalog, so inference you paid for directly still
+        shows true cost. Attaching twice raises.
+        """
+        if items is None:
+            tokens = extract_usage(usage)
+            items = [
+                {
+                    "batch_item_id": None,
+                    "output": output,
+                    "provider": provider,
+                    "model_name": model_name,
+                    "input_tokens": (
+                        input_tokens if input_tokens is not None else tokens["input_tokens"]
+                    ),
+                    "output_tokens": (
+                        output_tokens if output_tokens is not None else tokens["output_tokens"]
+                    ),
+                    "response_time_ms": response_time_ms,
+                    "status": status,
+                    "error": error,
+                }
+            ]
+        response = self._client.request(
+            "POST",
+            f"/v1/completions/{completion_id}/response",
+            json_body=build_attach_payload(items),
+        )
+        return CompletionRecord.model_validate(response.json())
+
+    def external(self, cube_id: str, variables=None, **kwargs) -> _ExternalContext:
+        return _ExternalContext(
+            lambda: self.render(cube_id, variables, **kwargs),
+            lambda cid, items: self.attach(cid, items),
+        )
+
+    external.__doc__ = EXTERNAL_DOC
+
+    def external_handler(self, cube_id: str, **kwargs):
+        """Decorator sugar over :meth:`external` for a function that IS the call.
+
+        The decorated function receives the run as its first argument and is
+        called with the cube's variables as keyword arguments; whatever it
+        returns becomes the attached output::
+
+            @client.completions.external_handler("cbe_a1B2c3D4e5F6g7")
+            def handle(run, *, inquiry: str) -> str:
+                resp = openai.chat.completions.create(
+                    model=run.model_name, messages=run.messages
+                )
+                run.usage = resp.usage          # optional, for true cost
+                return resp.choices[0].message.content
+
+            handle(inquiry="my order is late")
+
+        Prefer :meth:`external` when the variables are computed rather than
+        parameters, or when the cube isn't known at import time — a decorator
+        fixes it there.
+        """
+
+        def decorate(fn):
+            @functools.wraps(fn)
+            def wrapper(**variables):
+                with self.external(cube_id, variables or None, **kwargs) as run:
+                    result = fn(run, **variables)
+                    # An explicit `run.output` wins; returning the text is just
+                    # the shorter way to say the same thing.
+                    if run.output is None and result is not None:
+                        run.output = result
+                    return result
+
+            return wrapper
+
+        return decorate
 
     def create(
         self,
@@ -348,6 +729,103 @@ class Completions:
 class AsyncCompletions:
     def __init__(self, client: "AsyncCubic") -> None:
         self._client = client
+
+    async def render(
+        self,
+        cube_id: str,
+        variables: dict[str, Any] | list[dict[str, Any]] | None = None,
+        *,
+        version: int | None = None,
+        channel: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        models: list[dict[str, Any]] | None = None,
+        parameters: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        test_mode: bool = False,
+    ) -> RenderedPrompt:
+        """The cube's prompt, substituted and ready to run, without running it."""
+        variables = await abind_file_variables(variables, self._client.attachments.upload)
+        payload = build_render_payload(
+            cube_id,
+            variables,
+            version_number=version,
+            channel=channel,
+            history=history,
+            models=models,
+            parameters=parameters,
+            metadata=metadata,
+            test_mode=test_mode,
+        )
+        response = await self._client.request(
+            "POST", "/v1/completions/render", json_body=payload
+        )
+        return RenderedPrompt.model_validate(response.json())
+
+    async def attach(
+        self,
+        completion_id: str | uuid.UUID,
+        items: list[dict[str, Any]] | None = None,
+        *,
+        output: Any = None,
+        provider: str | None = None,
+        model_name: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        usage: Any = None,
+        response_time_ms: int | None = None,
+        status: str = "success",
+        error: str | None = None,
+    ) -> CompletionRecord:
+        """Post back the result of a render you executed yourself."""
+        if items is None:
+            tokens = extract_usage(usage)
+            items = [
+                {
+                    "batch_item_id": None,
+                    "output": output,
+                    "provider": provider,
+                    "model_name": model_name,
+                    "input_tokens": (
+                        input_tokens if input_tokens is not None else tokens["input_tokens"]
+                    ),
+                    "output_tokens": (
+                        output_tokens if output_tokens is not None else tokens["output_tokens"]
+                    ),
+                    "response_time_ms": response_time_ms,
+                    "status": status,
+                    "error": error,
+                }
+            ]
+        response = await self._client.request(
+            "POST",
+            f"/v1/completions/{completion_id}/response",
+            json_body=build_attach_payload(items),
+        )
+        return CompletionRecord.model_validate(response.json())
+
+    def external(self, cube_id: str, variables=None, **kwargs) -> _AsyncExternalContext:
+        return _AsyncExternalContext(
+            lambda: self.render(cube_id, variables, **kwargs),
+            lambda cid, items: self.attach(cid, items),
+        )
+
+    external.__doc__ = EXTERNAL_DOC
+
+    def external_handler(self, cube_id: str, **kwargs):
+        """Awaitable twin of ``Completions.external_handler``."""
+
+        def decorate(fn):
+            @functools.wraps(fn)
+            async def wrapper(**variables):
+                async with self.external(cube_id, variables or None, **kwargs) as run:
+                    result = await fn(run, **variables)
+                    if run.output is None and result is not None:
+                        run.output = result
+                    return result
+
+            return wrapper
+
+        return decorate
 
     async def create(
         self,

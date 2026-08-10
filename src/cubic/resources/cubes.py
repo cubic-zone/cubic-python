@@ -412,6 +412,21 @@ def parse_test_result(response: "httpx.Response"):
     return result
 
 
+def build_retrieve_params(
+    version: int | None, channel: str | None
+) -> dict[str, Any] | None:
+    """Query params for a cube read. Both set is refused here rather than
+    server-side, so the mistake surfaces without a round trip — a channel moves
+    and a version does not, so asking for both has no coherent answer."""
+    if version is not None and channel is not None:
+        raise TypeError("Pass either version or channel, not both")
+    if version is not None:
+        return {"version_number": version}
+    if channel is not None:
+        return {"channel": channel}
+    return None
+
+
 def parse_versions(response: "httpx.Response") -> list[CubeVersion]:
     return [CubeVersion.model_validate(v) for v in response.json()]
 
@@ -420,8 +435,16 @@ class Cubes:
     def __init__(self, client: "Cubic") -> None:
         self._client = client
 
-    def retrieve(self, cube_id: str, *, version: int | None = None) -> Cube:
-        params = {"version_number": version} if version is not None else None
+    def retrieve(
+        self, cube_id: str, *, version: int | None = None, channel: str | None = None
+    ) -> Cube:
+        """The cube's definition as a version or channel serves it.
+
+        Neither argument reads what ``production`` serves. Prompts come back as
+        written — variables and function markers unsubstituted — and no
+        completion is recorded. ``cube_id`` also accepts ``cbe_…@staging``.
+        """
+        params = build_retrieve_params(version, channel)
         response = self._client.request(
             "GET", f"/v1/cubes/{cube_id}", params=params, idempotent=True
         )
@@ -662,8 +685,16 @@ class AsyncCubes:
     def __init__(self, client: "AsyncCubic") -> None:
         self._client = client
 
-    async def retrieve(self, cube_id: str, *, version: int | None = None) -> Cube:
-        params = {"version_number": version} if version is not None else None
+    async def retrieve(
+        self, cube_id: str, *, version: int | None = None, channel: str | None = None
+    ) -> Cube:
+        """The cube's definition as a version or channel serves it.
+
+        Neither argument reads what ``production`` serves. Prompts come back as
+        written — variables and function markers unsubstituted — and no
+        completion is recorded. ``cube_id`` also accepts ``cbe_…@staging``.
+        """
+        params = build_retrieve_params(version, channel)
         response = await self._client.request(
             "GET", f"/v1/cubes/{cube_id}", params=params, idempotent=True
         )

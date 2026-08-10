@@ -57,6 +57,50 @@ def test_retrieve_pinned_version_sends_query_param():
     assert cube.version_number == 5
 
 
+def test_retrieve_by_channel_sends_query_param():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == {"channel": "staging"}
+        return httpx.Response(200, json={**CUBE_BODY, "version_number": 9})
+
+    with make_client(handler) as client:
+        cube = client.cubes.retrieve("cbe_plaincube0001", channel="staging")
+    # The response reports what the channel landed on, so no second lookup.
+    assert cube.version_number == 9
+
+
+def test_retrieve_suffix_sugar_is_left_to_the_server():
+    """``cbe_…@staging`` is one identifier on both surfaces; the SDK forwards it
+    rather than parsing it, so there is one implementation of the rule."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/cubes/cbe_plaincube0001@staging"
+        assert "channel" not in dict(request.url.params)
+        return httpx.Response(200, json=CUBE_BODY)
+
+    with make_client(handler) as client:
+        client.cubes.retrieve("cbe_plaincube0001@staging")
+
+
+def test_retrieve_rejects_version_and_channel_together():
+    """Refused client-side: the mistake surfaces without a round trip."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("no request should be made")
+
+    with make_client(handler) as client:
+        with pytest.raises(TypeError, match="not both"):
+            client.cubes.retrieve("cbe_plaincube0001", version=5, channel="staging")
+
+
+def test_unknown_channel_raises_channel_not_found():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_envelope(404, "Channel “nope” not found on this cube", "channel_not_found")
+
+    with make_client(handler) as client:
+        with pytest.raises(cubic.CubicError):
+            client.cubes.retrieve("cbe_plaincube0001", channel="nope")
+
+
 def test_unknown_or_foreign_id_raises_cube_not_found():
     def handler(request: httpx.Request) -> httpx.Response:
         return error_envelope(404, "Cube not found", "cube_not_found")

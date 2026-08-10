@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.0 (2026-08-09)
+
+- **Run inference yourself.** `client.completions.external(...)` renders a
+  cube's prompt, yields everything needed to reproduce the call, and posts your
+  result back so the run still lands in Logs, Usage and per-version outcomes:
+
+  ```python
+  with client.completions.external(cube_id, {"inquiry": text}) as run:
+      resp = openai.chat.completions.create(model=run.model_name, messages=run.messages)
+      run.output = resp.choices[0].message.content
+      run.usage = resp.usage
+  ```
+
+  A raised exception inside the block attaches the failure and re-raises, so
+  external error rates stay visible. Batch renders iterate and attach in one
+  call. `async with` works the same way on `AsyncCubic`.
+
+  The halves are separately available as `completions.render()` →
+  `RenderedPrompt` and `completions.attach(completion_id, ...)`, so the result
+  can be posted from a different process.
+
+  Provider `usage` objects from OpenAI and Anthropic are mapped client-side;
+  unrecognised shapes leave usage *unknown* rather than zero. Requires a paid
+  plan; refused for marketplace cubes you don't own, and for polycubes.
+
+- Attached output is validated against the cube's `response_format` when it
+  declares one. A conforming result is stored parsed; a mismatch is recorded but
+  reported as `partial` with an `output_validation` error, so an external model
+  that quietly stopped honouring the schema is visible. Nothing is repaired —
+  repair would mean Cubic re-prompting a model on a path that exists because you
+  own the provider calls.
+
+- `cubes.retrieve()` accepts `channel=` alongside `version=`, so you can read
+  what a named pointer serves without first listing channels. Passing both
+  raises `TypeError` before the request goes out. `cbe_…@staging` ids work here
+  too, exactly as they do when running a completion.
+
 ## 0.8.0 (2026-08-04)
 
 - New `ConflictError` for HTTP 409. Previously these fell through to the base

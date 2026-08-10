@@ -198,8 +198,9 @@ incrementing `X-Maxwell-Delivery-Attempt` header; deduplicate on
 ## Reading a cube's definition
 
 ```python
-cube = client.cubes.retrieve("cbe_a1B2c3D4e5F6g7")          # latest
-cube = client.cubes.retrieve("cbe_a1B2c3D4e5F6g7", version=5)
+cube = client.cubes.retrieve("cbe_a1B2c3D4e5F6g7")                      # latest
+cube = client.cubes.retrieve("cbe_a1B2c3D4e5F6g7", version=5)           # pinned
+cube = client.cubes.retrieve("cbe_a1B2c3D4e5F6g7", channel="staging")   # a pointer
 
 cube.system_instructions   # the cube's system prompt
 cube.user_prompt           # the user prompt template
@@ -207,8 +208,63 @@ cube.variables             # input schema — handy for pre-flight checks
 cube.models                # the model stack (provider, model, rank, role)
 ```
 
+Reading is free and records nothing. Prompts come back exactly as written —
+`{{variables}}` and function markers unsubstituted. With neither argument you
+get what `production` serves.
+
 Definitions are owner-only: marketplace cubes you subscribe to can be *run*
 but not read, and polycube definitions are not yet available on this endpoint.
+
+## Running inference yourself
+
+Use Cubic for prompt management and versioning while calling your own provider.
+`external()` renders the prompt, hands you everything needed to reproduce the
+call, and posts your result back so the run still lands in Logs, Usage and
+per-version outcomes:
+
+```python
+with client.completions.external(cube_id, {"inquiry": text}) as run:
+    resp = openai.chat.completions.create(model=run.model_name, messages=run.messages)
+    run.output = resp.choices[0].message.content
+    run.usage = resp.usage          # OpenAI and Anthropic shapes both map
+```
+
+If the block raises, the failure is attached and re-raised — external error
+rates stay visible instead of looking like runs nobody finished.
+
+`run.models` is the full stack in fallback order, `run.parameters` the cube's
+settings, and `run.response_format` its compiled JSON Schema, so a
+structured-output cube works the same way. Batch renders iterate, and attach
+every item in one call:
+
+```python
+with client.completions.external(cube_id, [{"id": "a", "variables": {...}}]) as batch:
+    for item in batch:
+        item.output = run_your_model(item.messages)
+```
+
+The two halves are also available separately — `client.completions.render(...)`
+returns a `RenderedPrompt` carrying a `completion_id`, and
+`client.completions.attach(completion_id, output=...)` posts back to it later,
+from a different process if you like.
+
+Supply `provider`/`model_name` and token counts and Cubic prices the call from
+its model catalog, so inference you paid for directly still shows true cost.
+Omit them and usage stays *unknown* rather than becoming zero.
+
+If the cube declares a `response_format`, attached output is validated against
+it. Conforming output is stored parsed; output that misses the schema is still
+recorded, but the run comes back `partial` with an `output_validation` error
+rather than looking like a clean success. Validation never repairs — on this
+path the provider calls are yours.
+
+Rendering bills for what it actually consumed — function markers, resource
+lookups and nested cubes all still execute, since they are what produces the
+text — and the attach itself is free. Requires a paid plan; refused for
+marketplace cubes you don't own, and for polycubes.
+
+To read a prompt *without* rendering it — unsubstituted, free, no record —
+use `client.cubes.retrieve()` above.
 
 ## Authoring cubes
 

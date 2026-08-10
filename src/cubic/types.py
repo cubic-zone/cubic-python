@@ -538,6 +538,92 @@ class Cube(_Model):
     draft_changed_fields: list[str] = []
 
 
+class RenderedItem(_Model):
+    """One rendered prompt — substituted, with every marker already executed.
+
+    ``batch_item_id`` is set only when the render was batched; a scalar render
+    has exactly one item with ``batch_item_id=None``.
+    """
+
+    batch_item_id: str | None = None
+    system_instructions: str | None = None
+    user_prompt: str
+    messages: list[dict] = []
+    variables_used: dict = {}
+
+
+class RenderUsage(_Model):
+    """What producing the render consumed.
+
+    Rendering is not free: function markers, resource lookups and nested cube
+    invocations all execute to produce the text. Only the final provider call is
+    skipped — that one is yours to make.
+    """
+
+    credits_charged: int | None = None
+    functions_time_ms: int = 0
+    events: list[dict] = []
+
+
+class RenderedPrompt(_Model):
+    """A cube's prompt, rendered and ready for you to run.
+
+    Everything except ``renders`` is per-request — a batch shares one model
+    stack, one parameter set, one schema, one version — so the fields you need
+    to reproduce the call sit at the top level. ``renders`` is always a list,
+    length 1 for a scalar request.
+
+    Post the result back with ``client.completions.attach(...)``, or let the
+    ``client.completions.external(...)`` context manager do it for you.
+    """
+
+    completion_id: str
+    request_id: str | None = None
+    prompt_id: str
+    version_number: int
+    resolved_channel: str | None = None
+    completion_type: str
+    models: list[CubeModel] = []
+    parameters: dict = {}
+    response_format: dict | None = None
+    response_format_source: str = "none"
+    renders: list[RenderedItem] = []
+    usage: RenderUsage = RenderUsage()
+
+    @property
+    def messages(self) -> list[dict]:
+        """The single render's messages. Raises on a batch, where the caller has
+        to iterate — silently returning the first item's would mean running one
+        prompt and attributing the answer to all of them."""
+        return self._only().messages
+
+    @property
+    def user_prompt(self) -> str:
+        return self._only().user_prompt
+
+    @property
+    def system_instructions(self) -> str | None:
+        return self._only().system_instructions
+
+    @property
+    def model_name(self) -> str | None:
+        """The cube's first-choice model. Later ranks are its fallback order —
+        read ``.models`` if you want to reproduce that too."""
+        return self.models[0].model_name if self.models else None
+
+    @property
+    def provider(self) -> str | None:
+        return self.models[0].provider if self.models else None
+
+    def _only(self) -> RenderedItem:
+        if len(self.renders) != 1:
+            raise ValueError(
+                f"This is a batch render ({len(self.renders)} items) — iterate over "
+                "`.renders` and attach every item in one call"
+            )
+        return self.renders[0]
+
+
 VariableType = Literal["string", "integer", "float", "boolean", "file"]
 
 
