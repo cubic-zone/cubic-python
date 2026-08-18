@@ -1,0 +1,45 @@
+# Composite action wrapping the `cubic` CLI, so a workflow is three lines.
+#
+# The exit code is the product: a regressed eval fails the job. An eval nobody
+# enforces gets ignored within a month, which is the entire reason this exists.
+name: "Cubic eval gate"
+description: "Run a Cubic eval and fail the build if it regressed."
+branding:
+  icon: check-square
+  color: blue
+
+inputs:
+  eval-id:
+    description: "The eval to run (an eval… id)."
+    required: true
+  api-key:
+    description: "A Cubic mxk_ API key. Store it as a repository secret."
+    required: true
+  wait:
+    description: "Block until a dataset run finishes. Leave true — the exit code means nothing otherwise."
+    required: false
+    default: "true"
+  timeout:
+    description: "Seconds to wait for a batch run."
+    required: false
+    default: "1800"
+  fail-on:
+    description: "Verdicts that fail the build."
+    required: false
+    default: "fail,error"
+
+runs:
+  using: composite
+  steps:
+    - name: Install the Cubic CLI
+      shell: bash
+      run: pip install --quiet "cubic>=0.10.0"
+    - name: Run the eval
+      shell: bash
+      env:
+        CUBIC_API_KEY: ${{ inputs.api-key }}
+      run: |
+        cubic evals run "${{ inputs.eval-id }}" \
+          ${{ inputs.wait == 'true' && '--wait' || '' }} \
+          --timeout "${{ inputs.timeout }}" \
+          --fail-on "${{ inputs.fail-on }}"

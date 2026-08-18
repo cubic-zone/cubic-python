@@ -40,7 +40,7 @@ def metrics(**overrides) -> dict:
         "total_cost": 0.001,
         "response_time_ms": 350,
         "success": True,
-        "credits_charged": 2,
+        "credits_rated": 2,
     }
     base.update(overrides)
     return base

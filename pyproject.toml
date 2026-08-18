@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # PyPI distribution name ("cubic" is taken by an unrelated bioimaging package);
 # the import package remains `cubic`.
 name = "cubic-sdk"
-version = "0.9.0"
+version = "0.10.0"
 description = "Official Python SDK for Cubic — run your Cubes and Polycubes from any application."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,11 @@ Homepage = "https://cubic.zone"
 Documentation = "https://cubic.zone/docs"
 Repository = "https://github.com/cubic-zone/cubic-python"
 Changelog = "https://github.com/cubic-zone/cubic-python/blob/main/CHANGELOG.md"
+
+[project.scripts]
+# The CI gate (EVALS_UPGRADE_PLAN.md A10): `cubic evals run … --wait` exits
+# non-zero when an eval regresses, which is what makes a gate a gate.
+cubic = "cubic._cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]

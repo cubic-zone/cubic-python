@@ -40,7 +40,7 @@ RENDER_BODY = {
             "variables_used": {"q": "why is the sky blue?"},
         }
     ],
-    "usage": {"credits_charged": 3, "functions_time_ms": 120, "events": []},
+    "usage": {"credits_rated": 3, "functions_time_ms": 120, "events": []},
 }
 
 
@@ -96,7 +96,7 @@ def test_render_returns_everything_needed_to_reproduce_the_call():
     assert rendered.model_name == "gpt-5"  # convenience for the common case
     assert rendered.provider == "openai"
     assert rendered.response_format == {"type": "object"}
-    assert rendered.usage.credits_charged == 3
+    assert rendered.usage.credits_rated == 3
 
 
 def test_scalar_accessors_refuse_a_batch_render():
@@ -373,3 +373,82 @@ async def test_async_external_handler():
         assert await handle(q="why") == "answered why"
 
     assert body_of(seen[1])["output"] == "answered why"
+
+
+# ---- metadata: intent at render, history at attach ----
+
+
+def test_render_metadata_and_attach_metadata_travel_separately():
+    """Two moments, two fields, and the record hands both back unmerged."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/render"):
+            return httpx.Response(200, json=RENDER_BODY)
+        return httpx.Response(
+            200,
+            json=record_body(
+                metadata={"step": "triage"},
+                response_metadata={"region": "us-east-1"},
+            ),
+        )
+
+    with make_client(handler) as client:
+        client.completions.render("cbe_plaincube0001", {"q": "x"}, metadata={"step": "triage"})
+        record = client.completions.attach(
+            RENDER_BODY["completion_id"],
+            output="Rayleigh scattering.",
+            metadata={"region": "us-east-1", "retries": 2},
+        )
+
+    assert body_of(seen[0])["metadata"] == {"step": "triage"}
+    attached = body_of(seen[1])
+    assert attached["metadata"] == {"region": "us-east-1", "retries": 2}
+    # Still the scalar form — metadata describes the attach, not an item.
+    assert "items" not in attached
+    assert record.metadata == {"step": "triage"}
+    assert record.response_metadata == {"region": "us-east-1"}
+
+
+def test_a_batch_attach_carries_metadata_alongside_its_items():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/render"):
+            return httpx.Response(200, json=batch_render_body())
+        return httpx.Response(200, json=record_body())
+
+    with make_client(handler) as client:
+        with client.completions.external(
+            "cbe_plaincube0001", [{"id": "a", "variables": {}}, {"id": "b", "variables": {}}]
+        ) as run:
+            for item in run:
+                item.output = f"answer for {item.batch_item_id}"
+            run.metadata = {"region": "us-east-1"}
+
+    body = body_of(seen[1])
+    assert len(body["items"]) == 2
+    assert body["metadata"] == {"region": "us-east-1"}
+
+
+def test_the_block_reports_how_it_ran_even_when_it_raises():
+    """Knowing which endpoint you hit matters most on the runs that failed."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/render"):
+            return httpx.Response(200, json=RENDER_BODY)
+        return httpx.Response(200, json=record_body(status="error"))
+
+    with make_client(handler) as client:
+        with pytest.raises(RuntimeError):
+            with client.completions.external("cbe_plaincube0001", {"q": "x"}) as run:
+                run.metadata = {"region": "eu-west-1"}
+                raise RuntimeError("upstream 529")
+
+    body = body_of(seen[1])
+    assert body["status"] == "error"
+    assert body["metadata"] == {"region": "eu-west-1"}

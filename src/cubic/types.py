@@ -45,7 +45,9 @@ class Metrics(_Model):
     models_tried: list[str] = []
     cache_hit: bool = False
     prompt_cache_hit: bool = False
-    credits_charged: int = 0
+    # What the run cost at LIST PRICE. Recorded for every run, including ones no
+    # wallet was debited for (unlimited tiers, Cubic's own internal cubes).
+    credits_rated: int = 0
 
 
 class GeneratedFile(_Model):
@@ -286,6 +288,12 @@ class CompletionRecord(_Model):
     total_cost: float | None = None
     response_time_ms: int | None = None
     error_detail: dict | list[dict] | None = None
+    # Your own context, echoed back exactly as you sent it. ``metadata`` is what
+    # you stated on the request or render; ``response_metadata`` is what you
+    # reported at attach about running it yourself, so it is external-only and
+    # stays None until a response is attached. They are never merged.
+    metadata: dict | None = None
+    response_metadata: dict | None = None
     created_at: str | None = None
 
 
@@ -560,7 +568,7 @@ class RenderUsage(_Model):
     skipped — that one is yours to make.
     """
 
-    credits_charged: int | None = None
+    credits_rated: int | None = None
     functions_time_ms: int = 0
     events: list[dict] = []
 
@@ -653,3 +661,90 @@ def variable(
     if description is not None:
         declaration["description"] = description
     return declaration
+
+
+# ---- Datasets & evals (EVALS_UPGRADE_PLAN.md) ----
+class Dataset(_Model):
+    """A named set of input cases (``dset…``). Rows are ``variables`` maps — the
+    same shape ``completions.create`` takes, so a row curated from a real
+    request needs no translation."""
+
+    public_id: str
+    name: str
+    description: str | None = None
+    row_count: int = 0
+    cube_public_id: str | None = None
+    variable_keys: list[str] | None = None
+
+
+class DatasetRow(_Model):
+    """One input case. ``expected_output`` is the reference answer the
+    comparison graders check against; the LLM judge doesn't need one."""
+
+    id: str
+    ordinal: int
+    variables: dict[str, Any] = {}
+    expected_output: Any | None = None
+    notes: str | None = None
+
+
+class Eval(_Model):
+    """A saved, graded check of one Cube (``eval…``).
+
+    ``graders`` is the list it judges with — five of the six kinds are
+    deterministic and cost no credits. ``dataset_id`` set means a batch: one
+    case per row."""
+
+    id: str
+    public_id: str
+    name: str
+    graders: list[dict[str, Any]] = []
+    current_revision: int = 1
+    judge_mode: str = "platform"
+    dataset_id: str | None = None
+    last_verdict: str | None = None
+
+
+class EvalQuote(_Model):
+    """What running an eval would cost, before anything is spent."""
+
+    cases: int
+    legs: int
+    judge_graders: int
+    judge_mode: str
+    credits: int
+    is_batch: bool
+
+
+class EvalRun(_Model):
+    """One execution. A dataset run starts ``queued`` and is polled on
+    ``run_state`` until it is ``done``; an inline run is born done."""
+
+    id: str
+    eval_id: str
+    run_state: str = "done"
+    verdict: str
+    case_total: int = 1
+    case_passed: int = 0
+    case_failed: int = 0
+    case_error: int = 0
+    credits_charged: int = 0
+    rationale: str | None = None
+    scores: list[dict[str, Any]] | None = None
+
+    @property
+    def passed(self) -> bool:
+        """True only when the run finished and every case passed."""
+        return self.run_state == "done" and self.verdict == "pass"
+
+
+class EvalCaseResult(_Model):
+    """One dataset row, graded."""
+
+    id: str
+    ordinal: int
+    variables: dict[str, Any] = {}
+    output_content: Any | None = None
+    verdict: str
+    scores: list[dict[str, Any]] | None = None
+    rationale: str | None = None

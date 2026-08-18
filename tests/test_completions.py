@@ -42,7 +42,7 @@ def test_create_success_maps_fields_and_auth():
     assert isinstance(result, cubic.CompletionResult)
     assert result.kind == "cube"
     assert result.content == "Hello Ada"
-    assert result.metrics.credits_charged == 2
+    assert result.metrics.credits_rated == 2
     assert not result.is_partial and not result.is_queued
 
 

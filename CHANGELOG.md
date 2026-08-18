@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.10.0 (2026-08-11)
+
+- **Datasets and evals.** `client.datasets` and `client.evals` cover the whole
+  loop from code: build a set of input cases, point an eval at it, run it, and
+  read the per-case results.
+
+  ```python
+  ds = client.datasets.create("Golden set", cube_id=cube_id)
+  client.datasets.add_rows(ds.public_id, [{"variables": {"q": "..."}, "expected_output": "..."}])
+  client.evals.set_dataset(eval_id, ds.public_id)
+
+  run = client.evals.run(eval_id, wait=True)
+  if not run.passed:
+      for case in client.evals.cases(run.id, verdict="fail"):
+          print(case.ordinal, case.variables, case.rationale)
+  ```
+
+  A dataset run is queued on a worker, so `wait=True` polls it to completion
+  and `run.passed` is true only when it finished and every case passed. Check
+  `client.evals.quote(eval_id)` first if a scheduled job might spend more than
+  you expect.
+
+- **A `cubic` CLI, and a GitHub Action.** Evals nobody enforces get ignored
+  within a month, so the exit code is the product:
+
+  ```bash
+  cubic evals run evalAbC123XyZ0000 --wait
+  ```
+
+  Exits 1 when the eval's verdict is `fail` or `error` (and prints the failing
+  cases), 2 when it couldn't run or timed out — so a pipeline can tell "it
+  broke" apart from "we gave up waiting". `cubic evals compare` fails on any
+  regression between two runs. The `action/` directory wraps the same command
+  for GitHub Actions.
+
+- Evals are now reachable with an `mxk_` key and addressable by their public
+  `eval…` id, which is what makes all of the above possible.
+
 ## 0.9.0 (2026-08-09)
 
 - **Run inference yourself.** `client.completions.external(...)` renders a

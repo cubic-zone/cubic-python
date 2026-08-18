@@ -87,6 +87,7 @@ class AsyncCubic:
         from .resources.attachments import AsyncAttachments
         from .resources.completions import AsyncCompletions
         from .resources.cubes import AsyncCubes
+        from .resources.evals import AsyncDatasets, AsyncEvals
         from .resources.files import AsyncFiles
         from .resources.models import AsyncModels
         from .resources.polycubes import AsyncPolycubes
@@ -96,6 +97,8 @@ class AsyncCubic:
         self.files = AsyncFiles(self)
         self.completions = AsyncCompletions(self)
         self.cubes = AsyncCubes(self)
+        self.datasets = AsyncDatasets(self)
+        self.evals = AsyncEvals(self)
         self.models = AsyncModels(self)
         self.polycubes = AsyncPolycubes(self)
         self.projects = AsyncProjects(self)

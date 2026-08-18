@@ -293,14 +293,24 @@ def build_render_payload(cube_id: str, variables, **kwargs) -> dict[str, Any]:
     return payload
 
 
-def build_attach_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+def build_attach_payload(
+    items: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Scalar form for one unbatched item, ``items`` for everything else — the
-    shape the API validates as mutually exclusive."""
+    shape the API validates as mutually exclusive.
+
+    ``metadata`` describes the whole attach rather than any one item, so it rides
+    alongside either form instead of counting as a scalar field.
+    """
     if len(items) == 1 and items[0].get("batch_item_id") is None:
-        return {k: v for k, v in items[0].items() if k != "batch_item_id" and v is not None} or {
-            "output": items[0].get("output")
-        }
-    return {"items": items}
+        body = {
+            k: v for k, v in items[0].items() if k != "batch_item_id" and v is not None
+        } or {"output": items[0].get("output")}
+    else:
+        body = {"items": items}
+    if metadata is not None:
+        body["metadata"] = metadata
+    return body
 
 
 class _ExternalRun:
@@ -322,6 +332,10 @@ class _ExternalRun:
         self.provider: str | None = rendered.provider
         self.model_name: str | None = rendered.model_name
         self.response_time_ms: int | None = None
+        # How you ran it, recorded on the way out. Belongs to the whole block —
+        # a batch is still one job of yours — and is attached even when the
+        # block raises, which is exactly when knowing how it ran matters most.
+        self.metadata: dict[str, Any] | None = None
         self.items: list[_ExternalItem] = [
             _ExternalItem(r, rendered) for r in rendered.renders if r.batch_item_id is not None
         ]
@@ -447,7 +461,7 @@ class _ExternalContext:
         run = self._run
         if run is None:  # pragma: no cover - __enter__ always sets it
             return False
-        self._attach(run.completion_id, run._payload_items(exc))
+        self._attach(run.completion_id, run._payload_items(exc), run.metadata)
         return False  # never swallow: the caller's exception is theirs to see
 
 
@@ -467,7 +481,7 @@ class _AsyncExternalContext:
         run = self._run
         if run is None:  # pragma: no cover
             return False
-        await self._attach(run.completion_id, run._payload_items(exc))
+        await self._attach(run.completion_id, run._payload_items(exc), run.metadata)
         return False
 
 
@@ -553,6 +567,7 @@ class Completions:
         response_time_ms: int | None = None,
         status: str = "success",
         error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> CompletionRecord:
         """Post back the result of a render you executed yourself.
 
@@ -560,6 +575,11 @@ class Completions:
         and token counts (or a provider ``usage`` object) and Cubic prices the
         call from its model catalog, so inference you paid for directly still
         shows true cost. Attaching twice raises.
+
+        ``metadata`` records how you actually ran it — the endpoint you hit, the
+        parameters you chose, your own request id. It is stored separately from
+        the ``metadata`` you passed to ``render``, so stating intent up front and
+        reporting execution afterwards never overwrite each other.
         """
         if items is None:
             tokens = extract_usage(usage)
@@ -583,14 +603,14 @@ class Completions:
         response = self._client.request(
             "POST",
             f"/v1/completions/{completion_id}/response",
-            json_body=build_attach_payload(items),
+            json_body=build_attach_payload(items, metadata),
         )
         return CompletionRecord.model_validate(response.json())
 
     def external(self, cube_id: str, variables=None, **kwargs) -> _ExternalContext:
         return _ExternalContext(
             lambda: self.render(cube_id, variables, **kwargs),
-            lambda cid, items: self.attach(cid, items),
+            lambda cid, items, meta=None: self.attach(cid, items, metadata=meta),
         )
 
     external.__doc__ = EXTERNAL_DOC
@@ -775,6 +795,7 @@ class AsyncCompletions:
         response_time_ms: int | None = None,
         status: str = "success",
         error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> CompletionRecord:
         """Post back the result of a render you executed yourself."""
         if items is None:
@@ -799,14 +820,14 @@ class AsyncCompletions:
         response = await self._client.request(
             "POST",
             f"/v1/completions/{completion_id}/response",
-            json_body=build_attach_payload(items),
+            json_body=build_attach_payload(items, metadata),
         )
         return CompletionRecord.model_validate(response.json())
 
     def external(self, cube_id: str, variables=None, **kwargs) -> _AsyncExternalContext:
         return _AsyncExternalContext(
             lambda: self.render(cube_id, variables, **kwargs),
-            lambda cid, items: self.attach(cid, items),
+            lambda cid, items, meta=None: self.attach(cid, items, metadata=meta),
         )
 
     external.__doc__ = EXTERNAL_DOC

@@ -45,7 +45,7 @@ result = client.completions.create(
 
 result.content            # str | dict — the winning completion (or final node output)
 result.kind               # "cube" | "polycube"
-result.metrics            # tokens, cost, credits_charged, latency, cache hits
+result.metrics            # tokens, cost, credits_rated, latency, cache hits
 result.request_id         # keep this for retrieval / support
 result.is_partial         # cube delivered content but some fallbacks failed
 result.segments           # polycube only: per-node outputs, metrics, errors
