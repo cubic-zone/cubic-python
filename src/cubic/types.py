@@ -537,7 +537,16 @@ class Cube(_Model):
     variables: dict = {}
     functions: list[str] = []
     response_format: dict | None = None
+    # "none" | "manual" | "auto". Left an open ``str`` rather than a Literal on
+    # purpose: a response field narrowed to today's values would fail to parse
+    # a source added server-side after this release.
     response_format_source: str = "none"
+    # What this cube generates: "text" | "image" | "audio". Fixed at creation,
+    # derived from the model stack — see ``cubes.create(output_type=…)``.
+    output_kind: str = "text"
+    # True for a structured cube: it always carries a ``response_format``, and a
+    # text cube never does. Also fixed at creation.
+    is_structured: bool = False
     models: list[CubeModel] = []
     # True when an ``update`` landed on your draft rather than applying live.
     # The definition above is still the PUBLISHED one — read ``cubes.draft()``

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.11.0 (2026-08-18)
+
+- **Create a cube of any output type.** `cubes.create` gained `output_type` —
+  `"text"` (default), `"structured"`, `"image"` or `"audio"` — plus
+  `response_format`. Structured cubes could previously only be made in the
+  dashboard, and `create_version(response_format=…)` was unusable on anything
+  the SDK could create:
+
+  ```python
+  scorer = client.cubes.create(
+      "Sentiment scorer",
+      user_prompt="Score the sentiment of {{text}}.",
+      models=[{"provider": "openai", "model_name": "gpt-4o-mini", "rank": 0}],
+      output_type="structured",
+      response_format={"type": "object",
+                       "properties": {"score": {"type": "number"}},
+                       "required": ["score"]},
+  )
+  ```
+
+  The output type is fixed at creation, so mismatched arguments are refused
+  locally rather than spending a round trip on a cube you would have to throw
+  away. For `"image"`/`"audio"` the medium comes from the model stack;
+  `output_type` asserts the stack agrees. Video is not offered — no catalog
+  model generates it yet.
+
+- **`cubes.delete(cube_id)`.** The counterpart to an immutable output type: a
+  cube created wrong can't be edited into shape, so the fix is delete and
+  re-create. Raises `ConflictError` for a listed, polycube-referenced or
+  platform cube.
+
+- **`cubes.test` takes `response_format` and `variable_definitions`.** Both are
+  unsaved, like the prompt overrides already were, so a schema or a retyped
+  variable can be tried before it is committed instead of being tested under the
+  saved definition.
+
+- **`Cube.output_kind` and `Cube.is_structured`** on reads — `retrieve` used to
+  leave the medium unreportable and structuredness inferable only from
+  `response_format_source`.
+
+
 ## 0.10.0 (2026-08-11)
 
 - **Datasets and evals.** `client.datasets` and `client.evals` cover the whole

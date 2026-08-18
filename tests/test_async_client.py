@@ -3,6 +3,8 @@ polycube auto-detection — just awaitable."""
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -130,3 +132,45 @@ async def test_requires_api_key(monkeypatch):
     monkeypatch.delenv("CUBIC_API_KEY", raising=False)
     with pytest.raises(cubic.CubicError, match="No API key"):
         AsyncCubic(api_key=None, base_url="http://testserver")
+
+
+async def test_cubes_create_structured_and_delete():
+    """The async twin carries the same output-type surface, including the local
+    argument check — which must not be sync-only."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(
+            201,
+            json={
+                "cube_id": "cbe_plaincube00001",
+                "title": "Scorer",
+                "completion_type": "fallback",
+                "current_version": 1,
+                "version_number": 1,
+                "user_prompt": "Rate {{text}}",
+                "response_format": {"type": "object", "properties": {"score": {"type": "number"}}},
+                "response_format_source": "manual",
+                "is_structured": True,
+                "models": [],
+            },
+        )
+
+    schema = {"type": "object", "properties": {"score": {"type": "number"}}}
+    async with make_async_client(handler) as client:
+        cube = await client.cubes.create(
+            "Scorer", user_prompt="Rate {{text}}",
+            output_type="structured", response_format=schema,
+        )
+        assert cube.is_structured is True
+        assert await client.cubes.delete(cube.cube_id) is None
+
+        with pytest.raises(ValueError, match="requires response_format"):
+            await client.cubes.create("T", user_prompt="x", output_type="structured")
+
+    assert json.loads(seen[0].content.decode())["is_structured"] is True
+    assert seen[1].method == "DELETE"
+    assert len(seen) == 2  # the rejected create never reached the network

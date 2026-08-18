@@ -374,3 +374,190 @@ def test_variables_omitted_when_not_declared(request_log):
         client.cubes.create("Plain", user_prompt="Hello {{name}}")
 
     assert "variables" not in body_of(request_log[0])
+
+
+# ---- output types -------------------------------------------------------------
+
+SCHEMA = {
+    "type": "object",
+    "properties": {"score": {"type": "number"}, "reason": {"type": "string"}},
+    "required": ["score"],
+}
+STRUCTURED_BODY = {
+    **CUBE_BODY,
+    "response_format": SCHEMA,
+    "response_format_source": "manual",
+    "is_structured": True,
+    "output_kind": "text",
+}
+
+
+def test_create_structured_sends_the_flag_and_the_schema():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = body_of(request)
+        return httpx.Response(201, json=STRUCTURED_BODY)
+
+    with make_client(handler) as client:
+        cube = client.cubes.create(
+            "Scorer",
+            user_prompt="Rate {{text}}",
+            output_type="structured",
+            response_format=SCHEMA,
+        )
+
+    # One SDK argument, two wire fields.
+    assert seen["body"]["is_structured"] is True
+    assert seen["body"]["response_format"] == SCHEMA
+    assert "output_kind" not in seen["body"]  # structured implies text
+    assert cube.is_structured is True
+    assert cube.response_format == SCHEMA
+    assert cube.output_kind == "text"
+
+
+def test_create_structured_can_state_the_schema_source():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = body_of(request)
+        return httpx.Response(201, json=STRUCTURED_BODY)
+
+    with make_client(handler) as client:
+        client.cubes.create(
+            "Scorer", user_prompt="Rate {{x}}", output_type="structured",
+            response_format=SCHEMA, response_format_source="auto",
+        )
+
+    assert seen["body"]["response_format_source"] == "auto"
+
+
+@pytest.mark.parametrize("kind", ["image", "audio"])
+def test_create_binary_asserts_the_medium(kind):
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = body_of(request)
+        return httpx.Response(201, json={**CUBE_BODY, "output_kind": kind})
+
+    with make_client(handler) as client:
+        cube = client.cubes.create(
+            f"{kind} maker",
+            user_prompt="Make {{thing}}",
+            models=[{"provider": "openai", "model_name": "gpt-5-image-mini", "rank": 0}],
+            output_type=kind,
+        )
+
+    # Sent as output_kind — the server checks it against the stack.
+    assert seen["body"]["output_kind"] == kind
+    assert "is_structured" not in seen["body"]
+    assert cube.output_kind == kind
+
+
+def test_create_without_an_output_type_sends_nothing():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = body_of(request)
+        return httpx.Response(201, json=CUBE_BODY)
+
+    with make_client(handler) as client:
+        cube = client.cubes.create("Plain", user_prompt="Hi {{x}}")
+
+    assert "output_kind" not in seen["body"] and "is_structured" not in seen["body"]
+    assert cube.output_kind == "text" and cube.is_structured is False
+
+
+def test_schema_and_output_type_must_agree():
+    """Caught locally, because the server's message would name ``is_structured``
+    — a field this SDK doesn't have."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("should never reach the network")
+
+    with make_client(handler) as client:
+        with pytest.raises(ValueError, match="requires response_format"):
+            client.cubes.create("T", user_prompt="x", output_type="structured")
+
+        with pytest.raises(ValueError, match='output_type="structured"'):
+            client.cubes.create("T", user_prompt="x", response_format=SCHEMA)
+
+        with pytest.raises(ValueError, match="Video is not available"):
+            client.cubes.create("T", user_prompt="x", output_type="video")
+
+
+def test_structured_cube_round_trips_through_retrieve():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=STRUCTURED_BODY)
+
+    with make_client(handler) as client:
+        cube = client.cubes.retrieve("cbe_plaincube0001")
+
+    assert cube.is_structured is True and cube.response_format_source == "manual"
+
+
+# ---- unsaved test overrides ---------------------------------------------------
+
+
+def test_test_sends_unsaved_schema_and_declarations(request_log):
+    from conftest import cube_success_body
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(200, json=cube_success_body('{"score": 9}'))
+
+    with make_client(handler) as client:
+        client.cubes.test(
+            "cbe_plaincube0001",
+            variables={"text": "hello"},
+            response_format=SCHEMA,
+            variable_definitions={"text": {"type": "string", "required": True}},
+        )
+
+    body = body_of(request_log[0])
+    assert body["response_format"] == SCHEMA
+    assert body["variable_definitions"] == {"text": {"type": "string", "required": True}}
+    assert body["variables"] == {"text": "hello"}
+
+
+def test_test_omits_the_overrides_when_not_given(request_log):
+    from conftest import cube_success_body
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(200, json=cube_success_body())
+
+    with make_client(handler) as client:
+        client.cubes.test("cbe_plaincube0001", variables={"text": "hi"})
+
+    body = body_of(request_log[0])
+    assert "response_format" not in body and "variable_definitions" not in body
+
+
+# ---- delete -------------------------------------------------------------------
+
+
+def test_delete_sends_the_request(request_log):
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(request)
+        return httpx.Response(204)
+
+    with make_client(handler) as client:
+        assert client.cubes.delete("cbe_plaincube0001") is None
+
+    assert request_log[0].method == "DELETE"
+    assert request_log[0].url.path == "/v1/cubes/cbe_plaincube0001"
+
+
+def test_delete_of_a_listed_cube_raises_conflict():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_envelope(
+            409, "This cube is publicly listed on the marketplace. Unlist it first.",
+            "cube_listed",
+        )
+
+    with make_client(handler) as client:
+        with pytest.raises(cubic.ConflictError) as e:
+            client.cubes.delete("cbe_plaincube0001")
+
+    assert e.value.error_code == "cube_listed"

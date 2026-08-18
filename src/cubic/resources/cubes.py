@@ -19,7 +19,7 @@ builders below.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..types import Channel, ChangelogEvent, Cube, CubeDraft, CubeVersion
 
@@ -70,6 +70,27 @@ CREATE_DOC = """Create a cube in one call — definition, model stack, and initi
         section of the README; an ``att_`` id passed to any other variable is
         rejected rather than dereferenced.
 
+        ``output_type`` picks what the cube produces, and is the one thing here
+        that can never be changed afterwards — there is no converting a text cube
+        into a structured one later, only ``delete`` and re-create.
+
+        - ``"text"`` (the default) — plain text out.
+        - ``"structured"`` — JSON conforming to ``response_format``, which is
+          then REQUIRED. The schema is validated at save: an object root with
+          named properties, types the platform can enforce, and a ``required``
+          list naming properties that exist. Every model in the stack must
+          support structured output.
+        - ``"image"`` / ``"audio"`` — a **Binary Cube**. The medium actually
+          comes from the models: naming an image stack is what makes an image
+          cube, so passing ``output_type`` here is an assertion that the stack
+          agrees (``output_kind_mismatch`` if it doesn't) rather than a setting.
+          Every model in the stack must generate the same medium.
+
+        Binary Cubes are narrower than text ones: no evals, no polycube
+        membership, no ``contest`` completion type, no response format, and
+        ``merge_responses`` does nothing. Video is not available — no model in
+        the catalog generates it yet.
+
         Creation is idempotent: an ``Idempotency-Key`` header is attached
         (auto-generated unless ``idempotency_key`` is given), so transient
         failures retry safely without minting duplicate cubes.
@@ -105,6 +126,12 @@ TEST_DOC = """Run the cube synchronously without saving anything — the
         test → judge → tweak at zero version cost, then commit the winning
         wording once with ``create_version``. Any callback URL is bypassed —
         the result always comes back in this call.
+
+        ``response_format`` and ``variable_definitions`` are unsaved too, which
+        is what lets a schema or a retyped variable be tried before it is
+        committed — testing an edited declaration under the SAVED type would
+        answer the wrong question. A response format may only be REPLACED, never
+        introduced: a text cube can't be tested into a structured one.
 
         ``models``/``parameters`` behave exactly as on ``completions.create``.
         Returns a :class:`CompletionResult`; raises the same
@@ -242,6 +269,57 @@ DIFF_DOC = """Diff any two versions — not only adjacent ones.
         """
 
 
+OUTPUT_TYPES = ("text", "structured", "image", "audio")
+
+
+def build_output_classification(
+    output_type: str | None, response_format: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Translate the SDK's one ``output_type`` into the wire's two fields.
+
+    Checked here rather than server-side so the error names the argument the
+    caller actually passed: the API talks about ``is_structured``, which is not
+    a parameter of this SDK. The classification is immutable, so a mistake costs
+    a delete and a re-create — worth one local check.
+    """
+    if output_type is not None and output_type not in OUTPUT_TYPES:
+        raise ValueError(
+            f"output_type must be one of {', '.join(OUTPUT_TYPES)} (got {output_type!r}). "
+            "Video is not available — no catalog model generates it yet."
+        )
+    if output_type == "structured" and not response_format:
+        raise ValueError(
+            'output_type="structured" requires response_format — a structured cube '
+            "always carries its schema, and it can't be added later."
+        )
+    if response_format and output_type != "structured":
+        raise ValueError(
+            'response_format needs output_type="structured". Only a structured cube '
+            "carries one, and the classification is fixed at creation."
+        )
+    payload: dict[str, Any] = {}
+    if output_type == "structured":
+        payload["is_structured"] = True
+    elif output_type is not None:
+        # An assertion against the stack, not an override — see CREATE_DOC.
+        payload["output_kind"] = output_type
+    return payload
+
+
+DELETE_DOC = """Delete a cube.
+
+        The classification chosen at ``create`` — completion type, output type —
+        can never be edited, so this is the only way to correct one: delete and
+        re-create. A cube that has already run is retained behind the scenes so
+        its completion history stays readable; one that never ran is removed.
+
+        Raises :class:`~cubic.ConflictError` for a cube something else depends
+        on: publicly listed on the marketplace (``cube_listed``), a node of a
+        polycube (``cube_in_polycube``), or one of Cubic's own platform cubes
+        (``system_cube_protected``). Unlist or delete the dependant first.
+        """
+
+
 def build_create_payload(
     title: str,
     *,
@@ -255,8 +333,16 @@ def build_create_payload(
     merge_responses: bool | None,
     variables: dict[str, dict[str, Any]] | None,
     project_id: str | None,
+    output_type: str | None = None,
+    response_format: dict[str, Any] | None = None,
+    response_format_source: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"title": title, "user_prompt": user_prompt}
+    payload.update(build_output_classification(output_type, response_format))
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if response_format_source is not None:
+        payload["response_format_source"] = response_format_source
     if system_instructions is not None:
         payload["system_instructions"] = system_instructions
     if models is not None:
@@ -373,10 +459,16 @@ def build_test_payload(
     test_mode: bool,
     test_response_content: str | dict[str, str] | None,
     client_request_id: str | uuid.UUID | None,
+    variable_definitions: dict[str, dict[str, Any]] | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if variables is not None:
         payload["variables"] = variables
+    if variable_definitions is not None:
+        payload["variable_definitions"] = variable_definitions
+    if response_format is not None:
+        payload["response_format"] = response_format
     if system_instructions is not None:
         payload["system_instructions"] = system_instructions
     if user_prompt is not None:
@@ -464,6 +556,9 @@ class Cubes:
         merge_responses: bool | None = None,
         variables: dict[str, dict[str, Any]] | None = None,
         project_id: str | None = None,
+        output_type: Literal["text", "structured", "image", "audio"] | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_format_source: Literal["manual", "auto"] | None = None,
         idempotency_key: str | None = None,
     ) -> Cube:
         payload = build_create_payload(
@@ -478,6 +573,9 @@ class Cubes:
             merge_responses=merge_responses,
             variables=variables,
             project_id=project_id,
+            output_type=output_type,
+            response_format=response_format,
+            response_format_source=response_format_source,
         )
         response = self._client.request(
             "POST",
@@ -514,6 +612,9 @@ class Cubes:
         response = self._client.request("PATCH", f"/v1/cubes/{cube_id}", json_body=payload)
         return Cube.model_validate(response.json())
 
+    def delete(self, cube_id: str) -> None:
+        self._client.request("DELETE", f"/v1/cubes/{cube_id}", idempotent=True)
+
     def test(
         self,
         cube_id: str,
@@ -521,6 +622,8 @@ class Cubes:
         *,
         system_instructions: str | None = None,
         user_prompt: str | None = None,
+        variable_definitions: dict[str, dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
         version: int | None = None,
         history: list[dict[str, str]] | None = None,
         models: list[dict[str, Any]] | None = None,
@@ -534,6 +637,8 @@ class Cubes:
             variables=variables,
             system_instructions=system_instructions,
             user_prompt=user_prompt,
+            variable_definitions=variable_definitions,
+            response_format=response_format,
             version=version,
             history=history,
             models=models,
@@ -665,6 +770,7 @@ class Cubes:
     retrieve.__doc__ = RETRIEVE_DOC
     create.__doc__ = CREATE_DOC
     update.__doc__ = UPDATE_DOC
+    delete.__doc__ = DELETE_DOC
     test.__doc__ = TEST_DOC
     create_version.__doc__ = CREATE_VERSION_DOC
     versions.__doc__ = VERSIONS_DOC
@@ -714,6 +820,9 @@ class AsyncCubes:
         merge_responses: bool | None = None,
         variables: dict[str, dict[str, Any]] | None = None,
         project_id: str | None = None,
+        output_type: Literal["text", "structured", "image", "audio"] | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_format_source: Literal["manual", "auto"] | None = None,
         idempotency_key: str | None = None,
     ) -> Cube:
         payload = build_create_payload(
@@ -728,6 +837,9 @@ class AsyncCubes:
             merge_responses=merge_responses,
             variables=variables,
             project_id=project_id,
+            output_type=output_type,
+            response_format=response_format,
+            response_format_source=response_format_source,
         )
         response = await self._client.request(
             "POST",
@@ -764,6 +876,9 @@ class AsyncCubes:
         response = await self._client.request("PATCH", f"/v1/cubes/{cube_id}", json_body=payload)
         return Cube.model_validate(response.json())
 
+    async def delete(self, cube_id: str) -> None:
+        await self._client.request("DELETE", f"/v1/cubes/{cube_id}", idempotent=True)
+
     async def test(
         self,
         cube_id: str,
@@ -771,6 +886,8 @@ class AsyncCubes:
         *,
         system_instructions: str | None = None,
         user_prompt: str | None = None,
+        variable_definitions: dict[str, dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
         version: int | None = None,
         history: list[dict[str, str]] | None = None,
         models: list[dict[str, Any]] | None = None,
@@ -784,6 +901,8 @@ class AsyncCubes:
             variables=variables,
             system_instructions=system_instructions,
             user_prompt=user_prompt,
+            variable_definitions=variable_definitions,
+            response_format=response_format,
             version=version,
             history=history,
             models=models,
@@ -917,6 +1036,7 @@ class AsyncCubes:
     retrieve.__doc__ = RETRIEVE_DOC
     create.__doc__ = CREATE_DOC
     update.__doc__ = UPDATE_DOC
+    delete.__doc__ = DELETE_DOC
     test.__doc__ = TEST_DOC
     create_version.__doc__ = CREATE_VERSION_DOC
     versions.__doc__ = VERSIONS_DOC

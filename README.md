@@ -206,6 +206,8 @@ cube.system_instructions   # the cube's system prompt
 cube.user_prompt           # the user prompt template
 cube.variables             # input schema — handy for pre-flight checks
 cube.models                # the model stack (provider, model, rank, role)
+cube.output_kind           # "text" | "image" | "audio"
+cube.is_structured         # True when it returns JSON matching response_format
 ```
 
 Reading is free and records nothing. Prompts come back exactly as written —
@@ -287,6 +289,61 @@ cube = client.cubes.create(
 # cube.cube_id → "cbe_…", version 1 / "1.0.0", immediately runnable
 ```
 
+### Output types
+
+`output_type` decides what a cube produces. It is the one choice you cannot
+revise later — there is no converting a text cube into a structured one, only
+`delete` and re-create.
+
+```python
+# JSON conforming to a schema. The schema is required, and validated at save.
+scorer = client.cubes.create(
+    "Sentiment scorer",
+    user_prompt="Score the sentiment of {{text}}.",
+    models=[{"provider": "openai", "model_name": "gpt-4o-mini", "rank": 0}],
+    output_type="structured",
+    response_format={
+        "type": "object",
+        "properties": {"score": {"type": "number"}, "label": {"enum": ["pos", "neg"]}},
+        "required": ["score", "label"],
+    },
+)
+# every run now returns parsed JSON: result.content["score"]
+```
+
+```python
+# A Binary Cube. The medium comes from the MODELS — naming an image stack is
+# what makes an image cube; output_type just asserts the stack agrees.
+art = client.cubes.create(
+    "Product shot",
+    user_prompt="A studio photo of {{product}} on white.",
+    models=[{"provider": "openai", "model_name": "gpt-5-image-mini", "rank": 0}],
+    output_type="image",
+)
+# runs return result.file → GeneratedFile (see Binary outputs above)
+```
+
+| `output_type` | What you get | Requires |
+|---|---|---|
+| `"text"` (default) | Plain text | — |
+| `"structured"` | JSON matching the schema | `response_format`; every model must support structured output |
+| `"image"` / `"audio"` | A generated file | An image/audio model stack, all one medium |
+
+Video is not available — no model in the catalog generates it yet.
+
+Binary Cubes are narrower than text ones: no evals, no polycube membership, no
+`contest` completion type, no response format, and `merge_responses` does
+nothing. Structured cubes carry their schema on every version, so
+`create_version` keeps it unless you pass a new one.
+
+Getting it wrong costs a delete and a re-create, so mismatched arguments are
+refused before the request leaves:
+
+```python
+client.cubes.create("T", user_prompt="…", response_format=SCHEMA)
+# ValueError: response_format needs output_type="structured"
+```
+
 ### Declaring inputs
 
 Every `{{placeholder}}` in the content becomes an input automatically, typed as
@@ -329,6 +386,9 @@ result = client.cubes.test(
     variables={"customer_name": "Ada", "issue": "billing"},
     user_prompt=candidate,          # UNSAVED override; variables re-extracted
 )
+# `response_format=` and `variable_definitions=` are unsaved too, so a schema or
+# a retyped variable can be tried before it is committed. A response format can
+# only be REPLACED this way — a text cube can't be tested into a structured one.
 # judge result.content … loop with new candidates until satisfied, then:
 v = client.cubes.create_version(
     cube.cube_id,
@@ -348,7 +408,13 @@ client.cubes.update(cube.cube_id, title="Support drafter v2",
                              "model_name": "claude-haiku-4-5", "rank": 0}])
 client.cubes.versions(cube.cube_id)                  # newest first, is_current flag
 client.cubes.set_current_version(cube.cube_id, 1)    # rollback — pointer only
+client.cubes.delete(cube.cube_id)                    # the fix for a wrong output type
 ```
+
+`delete` raises `ConflictError` for a cube something else depends on — publicly
+listed (`cube_listed`), a node of a polycube (`cube_in_polycube`), or one of
+Cubic's own platform cubes. A cube that has already run keeps its completion
+history readable.
 
 `create` attaches an `Idempotency-Key` automatically, so a retried create
 replays the original cube instead of minting a duplicate. Cube writes share a
