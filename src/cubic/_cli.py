@@ -81,10 +81,19 @@ def _compare(args: argparse.Namespace) -> int:
         f"regressed {counts.get('regressed', 0)} · fixed {counts.get('fixed', 0)} · "
         f"unchanged {counts.get('unchanged', 0)}"
     )
+    # Dataset rows are editable, so a case can differ between runs because the
+    # QUESTION changed. Those verdicts aren't comparable, and a gate that stayed
+    # silent about them would be reporting on a diff it can't actually read.
+    if counts.get("input_changed"):
+        print(
+            f"  note: {counts['input_changed']} case(s) had their dataset row edited between "
+            "these runs — neither a fix nor a regression can be read from them."
+        )
     for item in diff.get("items", []):
-        if item["status"] in ("regressed", "fixed"):
-            print(f"  {item['status']:<10} case {item['ordinal']}: {item['variables']}")
+        if item["status"] in ("regressed", "fixed", "input_changed"):
+            print(f"  {item['status']:<13} case {item['ordinal']}: {item['variables']}")
     # A regression between two runs is a failure even though each run "finished".
+    # An edited input is not: it is a warning about the comparison, not a defect.
     return EXIT_REGRESSED if counts.get("regressed") else 0
 
 

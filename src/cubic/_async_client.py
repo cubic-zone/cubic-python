@@ -13,6 +13,7 @@ from ._client import (
     DEFAULT_BASE_URL,
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT,
+    attribution_headers,
     classify_retry,
     error_from_response,
     next_delay,
@@ -44,6 +45,12 @@ class AsyncCubic:
             transports, testing). The SDK will not close it for you, and your
             client's own timeout config applies (httpx defaults to 5s — set
             something completion-sized like the SDK's 180s default).
+        app_url / app_title: Identify the application making these calls. Cubic
+            groups your Logs and Usage by the URL's registrable domain, so
+            ``https://app.example.com/checkout`` and ``https://example.com`` are
+            one application. Without them your traffic is filed as "Unknown".
+        default_headers: Sent on every request. Anything set here is overridden
+            by a per-call header of the same name.
     """
 
     def __init__(
@@ -57,6 +64,9 @@ class AsyncCubic:
         max_keepalive_connections: int | None = None,
         http_client: httpx.AsyncClient | None = None,
         backoff_base: float = 0.5,
+        app_url: str | None = None,
+        app_title: str | None = None,
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("CUBIC_API_KEY")
         if not self.api_key:
@@ -82,6 +92,7 @@ class AsyncCubic:
                 timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
                 **pool_limit_kwargs(max_connections, max_keepalive_connections),
             )
+        self._default_headers = attribution_headers(app_url, app_title, default_headers)
         self._kind_cache: dict[str, str] = {}
 
         from .resources.attachments import AsyncAttachments
@@ -130,6 +141,7 @@ class AsyncCubic:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "User-Agent": f"cubic-python/{__version__}",
+            **self._default_headers,
         }
         if extra_headers:
             headers.update(extra_headers)

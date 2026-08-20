@@ -294,6 +294,12 @@ class CompletionRecord(_Model):
     # stays None until a response is attached. They are never merged.
     metadata: dict | None = None
     response_metadata: dict | None = None
+    # The workflow this run belonged to, echoed back when you tagged the request
+    # with one. ``application_id`` is the app Cubic resolved from the request's
+    # HTTP-Referer (see ``Cubic(app_url=…)``); None means the run was not
+    # attributed to one.
+    run_id: str | None = None
+    application_id: str | None = None
     created_at: str | None = None
 
 

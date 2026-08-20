@@ -41,6 +41,7 @@ result = client.completions.create(
     # both kinds:
     test_mode=True,                           # no provider spend, no credit debit
     metadata={"trace": "abc"},
+    run_id=uuid.uuid4(),                      # group a workflow's calls in Logs
 )
 
 result.content            # str | dict — the winning completion (or final node output)
@@ -50,6 +51,35 @@ result.request_id         # keep this for retrieval / support
 result.is_partial         # cube delivered content but some fallbacks failed
 result.segments           # polycube only: per-node outputs, metrics, errors
 ```
+
+## Attributing your traffic
+
+Tell Cubic which application is calling and your Logs and Usage split by it,
+instead of every request landing in one undifferentiated pile:
+
+```python
+client = Cubic(app_url="https://app.example.com", app_title="Example Checkout")
+```
+
+This sends `HTTP-Referer` / `X-Title` on every request (the same pair
+OpenRouter uses). Grouping is by the URL's **registrable domain**, so
+`app.example.com` and `www.example.com` are one application — pass whatever URL
+you have. Requests without it show as **Unknown**, which is worth fixing:
+that bucket is spend you can't yet trace to a caller.
+
+For a workflow that runs several cubes, pass one `run_id` to each call and Logs
+groups them — including the nested cubes and polycube nodes they set off, which
+inherit it:
+
+```python
+run = uuid.uuid4()
+extracted = client.completions.create(extract_id, {"doc": Path("lease.pdf")}, run_id=run)
+summary = client.completions.create(summarise_id, {"text": extracted.content}, run_id=run)
+```
+
+`run_id` identifies the **workflow**, so it applies to polycubes too — unlike
+`client_request_id`, which identifies one request and is refused for polycubes.
+Any UUID you choose; Cubic never interprets it.
 
 ## Files
 

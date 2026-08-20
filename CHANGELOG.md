@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+## 0.12.0 (2026-08-20)
+
+- **Say which app is calling, and which workflow a call belongs to.** Two
+  dimensions Logs and Usage can now be sliced by. Identify the application once,
+  on the client:
+
+  ```python
+  client = Cubic(app_url="https://app.example.com", app_title="Example Checkout")
+  ```
+
+  That sends `HTTP-Referer` / `X-Title` — the same pair OpenRouter uses, so
+  code already setting them needs no change. Cubic groups by the URL's
+  registrable domain, so every page of your site is one application. Traffic
+  without it is filed as "Unknown", which is now distinguishable from runs you
+  made in the Cubic dashboard.
+
+  For a multi-cube workflow, pass one `run_id` to every call:
+
+  ```python
+  run = uuid.uuid4()
+  client.completions.create(extract_id, {"doc": path}, run_id=run)
+  client.completions.create(summarise_id, {"text": ...}, run_id=run)
+  ```
+
+  Logs then groups them, nested cubes and polycube nodes included — those
+  inherit the run id from the call that caused them. Unlike `client_request_id`,
+  which identifies one request and is refused for polycubes, `run_id` identifies
+  the workflow and works for both kinds. Any UUID you choose; Cubic never
+  interprets it.
+
+- **`default_headers` on both clients**, for anything else you need on every
+  request. A per-call header of the same name still wins.
+
+- **`evals compare` reports edited dataset rows.** Rows are editable and carry
+  no version, so the same row can hold a different question in each run. The
+  server now classifies those cases as `input_changed` instead of counting them
+  as fixed or regressed, and the CLI prints how many there were. It does not
+  fail the build: an edited input is a warning about the comparison, not a
+  defect in the cube.
+
 ## 0.11.0 (2026-08-18)
 
 - **Create a cube of any output type.** `cubes.create` gained `output_type` —

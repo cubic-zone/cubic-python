@@ -205,6 +205,23 @@ def test_compare_fails_the_build_on_any_regression(monkeypatch, capsys):
     assert "regressed 1" in capsys.readouterr().out
 
 
+def test_an_edited_dataset_row_is_flagged_but_does_not_fail_the_build(monkeypatch, capsys):
+    """A row edited between runs makes those verdicts incomparable.
+
+    Silently folding it into "unchanged" would let a gate report on a diff it
+    cannot read; failing the build on it would cry wolf over a dataset edit.
+    """
+    _cli_client(monkeypatch, lambda r: httpx.Response(200, json={
+        "counts": {"regressed": 0, "fixed": 0, "unchanged": 9, "input_changed": 1},
+        "items": [{"status": "input_changed", "ordinal": 2, "variables": {"name": "Grace"}}],
+    }))
+    code = main(["--api-key", "mxk_x", "evals", "compare", "evalAbC123XyZ0000", "--a", "r1", "--b", "r2"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "1 case(s) had their dataset row edited" in out
+    assert "input_changed case 2" in out
+
+
 def test_a_missing_api_key_is_an_error_not_a_pass(monkeypatch):
     monkeypatch.delenv("CUBIC_API_KEY", raising=False)
     # Exiting 0 here would let an unconfigured pipeline report green forever.
