@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from ._exceptions import CubicError
 
@@ -258,6 +258,30 @@ class PolycubeResult(_ResultBase):
         return self.final_output
 
 
+class RunRef(_Model):
+    """One node of a run tree — a run, a record inside it, or deeper.
+
+    ``path`` is your own keys, root first, which is what makes a run readable:
+    ``["nightly-2026-08-21", "rec-4471"]`` rather than an opaque id. Pass
+    ``public_id`` back to the analytics endpoints to filter by this node.
+    """
+
+    public_id: str
+    external_id: str
+    path: list[str] = Field(default_factory=list)
+    depth: int = 0
+    root_public_id: str | None = None
+
+
+class TagRef(_Model):
+    """A label on a completion. Name only — tags have no colour, no description,
+    and are never edited, matching the rule that a completion record is
+    immutable once written."""
+
+    public_id: str
+    name: str
+
+
 class CompletionRecord(_Model):
     """A persisted completion fetched by ``request_id``.
 
@@ -294,11 +318,18 @@ class CompletionRecord(_Model):
     # stays None until a response is attached. They are never merged.
     metadata: dict | None = None
     response_metadata: dict | None = None
-    # The workflow this run belonged to, echoed back when you tagged the request
-    # with one. ``application_id`` is the app Cubic resolved from the request's
+    # How this run was grouped, echoed back. ``run`` is the node it belongs to,
+    # with YOUR key and its full path — reading back an internal id would tell
+    # you nothing you could recognise — and ``run_id`` beside it is the node's
+    # ``run_…`` public id, which the analytics filters take. ``tags`` are the
+    # labels you declared on the request.
+    #
+    # ``application_id`` is the app Cubic resolved from the request's
     # HTTP-Referer (see ``Cubic(app_url=…)``); None means the run was not
     # attributed to one.
+    run: RunRef | None = None
     run_id: str | None = None
+    tags: list[TagRef] = Field(default_factory=list)
     application_id: str | None = None
     created_at: str | None = None
 

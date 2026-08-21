@@ -41,7 +41,8 @@ result = client.completions.create(
     # both kinds:
     test_mode=True,                           # no provider spend, no credit debit
     metadata={"trace": "abc"},
-    run_id=uuid.uuid4(),                      # group a workflow's calls in Logs
+    run_id="nightly-2026-08-21",              # group a workflow's calls in Logs
+    tags=["urgent", "eu-region"],             # flat labels to filter and cost by
 )
 
 result.content            # str | dict — the winning completion (or final node output)
@@ -67,19 +68,44 @@ OpenRouter uses). Grouping is by the URL's **registrable domain**, so
 you have. Requests without it show as **Unknown**, which is worth fixing:
 that bucket is spend you can't yet trace to a caller.
 
+## Grouping your work
+
 For a workflow that runs several cubes, pass one `run_id` to each call and Logs
 groups them — including the nested cubes and polycube nodes they set off, which
-inherit it:
+inherit it. Use whatever key you already have; Cubic never interprets it:
 
 ```python
-run = uuid.uuid4()
+run = "nightly-2026-08-21"
 extracted = client.completions.create(extract_id, {"doc": Path("lease.pdf")}, run_id=run)
 summary = client.completions.create(summarise_id, {"text": extracted.content}, run_id=run)
 ```
 
-`run_id` identifies the **workflow**, so it applies to polycubes too — unlike
+When the run has structure — a job that processes many records, each triggering
+several calls — give `run_path` instead, root first:
+
+```python
+for record in records:
+    client.completions.create(
+        extract_id, {"doc": record.file}, run_path=["nightly-2026-08-21", record.id]
+    )
+```
+
+You can then open the run in Logs, see its records, and open a record to see its
+completions. Cubic creates whatever levels are missing, so you never declare a
+run before using it, and re-sending the same path is idempotent. `run_id` is
+sugar for a one-level path — sending both raises, since they are two spellings
+of one field.
+
+Grouping identifies the **workflow**, so it applies to polycubes too — unlike
 `client_request_id`, which identifies one request and is refused for polycubes.
-Any UUID you choose; Cubic never interprets it.
+
+**Tags** are the orthogonal dimension: flat labels, any number per call, created
+the first time you use one. Filtering by several narrows, so `urgent` +
+`eu-region` is the urgent EU work — and Usage → Tags costs each slice:
+
+```python
+client.completions.create(cube_id, {"doc": path}, tags=["urgent", "eu-region"])
+```
 
 ## Files
 

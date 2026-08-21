@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+## 0.13.0 (2026-08-21)
+
+- **Group runs the way your job is actually shaped, and tag them.** `run_id` is
+  now any string you already hold — a job name, a date, an order number —
+  instead of a UUID you had to invent:
+
+  ```python
+  client.completions.create(cube_id, {...}, run_id="nightly-2026-08-21")
+  ```
+
+  When a run has structure, `run_path` names it root-first, and Logs becomes a
+  drill-down: open the run, see its records, open a record to see its
+  completions.
+
+  ```python
+  for record in records:
+      client.completions.create(
+          extract_id, {...}, run_path=["nightly-2026-08-21", record.id]
+      )
+  ```
+
+  Cubic creates whatever levels are missing, so a parent never has to be
+  declared first, and re-sending the same path is idempotent. `run_id` is sugar
+  for a one-level path; sending both raises, since they are two spellings of one
+  field.
+
+  `tags` are the orthogonal dimension — flat labels, any number per call,
+  created on first use. Filtering by several narrows, so `urgent` + `eu-region`
+  is the urgent EU work, and Usage → Tags costs each slice:
+
+  ```python
+  client.completions.create(cube_id, {...}, tags=["urgent", "eu-region"])
+  ```
+
+  Both are available on `completions.create` and `completions.render`, sync and
+  async, and both are inherited by the nested cubes and polycube nodes a call
+  sets off — so a cost-by-run figure covers the whole tree.
+
+- **`CompletionRecord` reads the grouping back.** `record.run` carries your own
+  keys and the full path (`["nightly-2026-08-21", "rec-4471"]`), `record.run_id`
+  is the node's `run_…` id for the analytics filters, and `record.tags` lists the
+  labels. New `RunRef` / `TagRef` types are exported.
+
+- **Breaking:** `run_id` no longer accepts a `uuid.UUID` as a distinct meaning —
+  it is stringified like any other key, and the value you get back from
+  `CompletionRecord.run_id` is now a `run_…` public id rather than the UUID you
+  sent. Ids from 0.12.0 were backfilled as run keys, so existing history is
+  still readable in Logs under its old UUID string.
+
 ## 0.12.0 (2026-08-20)
 
 - **Say which app is calling, and which workflow a call belongs to.** Two

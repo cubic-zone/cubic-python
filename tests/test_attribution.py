@@ -1,10 +1,12 @@
-"""Telling Cubic who is calling, and which workflow a call belongs to.
+"""Telling Cubic who is calling, and how a call is grouped.
 
-Both are advisory: nothing here changes what a run does, only how it is filed in
-Logs and Usage. So the properties worth pinning are that the identity travels on
-EVERY request (not just completions), that it never overrides something the
-caller set deliberately, and that the workflow id survives the polycube retry
-path — which strips the other caller-supplied id.
+All of it is advisory: nothing here changes what a run does, only how it is
+filed in Logs and Usage. So the properties worth pinning are that the identity
+travels on EVERY request (not just completions), that it never overrides
+something the caller set deliberately, that a run key is sent as the caller's
+own string rather than reshaped into something Cubic invented, and that the
+grouping survives the polycube retry path — which strips the other
+caller-supplied id.
 """
 
 from __future__ import annotations
@@ -131,48 +133,79 @@ async def test_the_async_client_attributes_identically():
 # ---- grouping a workflow -----------------------------------------------------
 
 
-def test_run_id_is_sent_on_the_body():
-    seen: list[httpx.Request] = []
-    run = uuid.uuid4()
-    with make_client(_ok(seen)) as client:
-        client.completions.create("cbe_plaincube0001", run_id=run)
-    assert body_of(seen[0])["run_id"] == str(run)
-
-
-def test_a_string_run_id_is_accepted():
-    """Callers carry workflow ids as strings far more often than as UUIDs."""
+def test_run_id_is_sent_as_the_callers_own_key():
+    """A job name, a date, an order number — whatever the caller already holds.
+    Hashing one into a UUID is what destroyed the readability this replaced."""
     seen: list[httpx.Request] = []
     with make_client(_ok(seen)) as client:
-        client.completions.create("cbe_plaincube0001", run_id="8b1f7d2e-0000-4000-8000-000000000001")
-    assert body_of(seen[0])["run_id"] == "8b1f7d2e-0000-4000-8000-000000000001"
+        client.completions.create("cbe_plaincube0001", run_id="nightly-2026-08-21")
+    assert body_of(seen[0])["run_id"] == "nightly-2026-08-21"
 
 
-def test_run_id_is_absent_when_not_given():
+def test_a_run_path_names_a_nested_run_root_first():
+    seen: list[httpx.Request] = []
+    with make_client(_ok(seen)) as client:
+        client.completions.create(
+            "cbe_plaincube0001", run_path=["nightly-2026-08-21", "rec-4471"]
+        )
+    assert body_of(seen[0])["run_path"] == ["nightly-2026-08-21", "rec-4471"]
+    # Only what was given: sending both spellings is the API's 422 to raise, and
+    # the SDK filling one in would hide the caller's mistake.
+    assert "run_id" not in body_of(seen[0])
+
+
+def test_tags_are_sent_as_a_list():
+    seen: list[httpx.Request] = []
+    with make_client(_ok(seen)) as client:
+        client.completions.create("cbe_plaincube0001", tags=["urgent", "eu-region"])
+    assert body_of(seen[0])["tags"] == ["urgent", "eu-region"]
+
+
+def test_grouping_is_absent_when_not_given():
     seen: list[httpx.Request] = []
     with make_client(_ok(seen)) as client:
         client.completions.create("cbe_plaincube0001")
-    assert "run_id" not in body_of(seen[0])
+    body = body_of(seen[0])
+    assert "run_id" not in body and "run_path" not in body and "tags" not in body
+
+
+def test_a_render_groups_and_tags_like_any_other_call():
+    """A render is still a step in a workflow — you fetched a prompt to run it."""
+    seen: list[httpx.Request] = []
+
+    from test_external_execution import RENDER_BODY
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=RENDER_BODY)
+
+    with make_client(handler) as client:
+        client.completions.render(
+            "cbe_plaincube0001", run_path=["nightly", "rec-1"], tags=["urgent"]
+        )
+    body = body_of(seen[0])
+    assert body["run_path"] == ["nightly", "rec-1"] and body["tags"] == ["urgent"]
 
 
 def test_several_calls_can_share_one_run():
     seen: list[httpx.Request] = []
-    run = uuid.uuid4()
+    run = "nightly-2026-08-21"
     with make_client(_ok(seen)) as client:
         client.completions.create("cbe_plaincube0001", {"a": 1}, run_id=run)
         client.completions.create("cbe_plaincube0002", {"b": 2}, run_id=run)
-    assert [body_of(r)["run_id"] for r in seen] == [str(run), str(run)]
+    assert [body_of(r)["run_id"] for r in seen] == [run, run]
     # Each call keeps its OWN request id — run_id groups them, it does not
     # make them the same request.
     ids = {body_of(r)["client_request_id"] for r in seen}
     assert len(ids) == 2
 
 
-def test_run_id_survives_the_polycube_retry_that_strips_client_request_id():
+def test_grouping_survives_the_polycube_retry_that_strips_client_request_id():
     """The retry exists because a polycube refuses ``client_request_id``. It must
     drop only that: a polycube is exactly the case where grouping the parent and
     its nodes under one run matters most."""
     seen: list[httpx.Request] = []
-    run = uuid.uuid4()
+    run = "nightly-2026-08-21"
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
@@ -185,48 +218,74 @@ def test_run_id_survives_the_polycube_retry_that_strips_client_request_id():
         return httpx.Response(200, json=polycube_success_body())
 
     with make_client(handler) as client:
-        result = client.completions.create("cbe_polycube000001", {"topic": "rates"}, run_id=run)
+        result = client.completions.create(
+            "cbe_polycube000001", {"topic": "rates"}, run_id=run, tags=["urgent"]
+        )
 
     assert len(seen) == 2, "expected the polycube retry"
     retried = body_of(seen[1])
     assert "client_request_id" not in retried
-    assert retried["run_id"] == str(run)
+    assert retried["run_id"] == run and retried["tags"] == ["urgent"]
     assert result.kind == "polycube"
 
 
 @pytest.mark.asyncio
-async def test_the_async_client_sends_run_id_too():
+async def test_the_async_client_sends_the_grouping_too():
     seen: list[httpx.Request] = []
-    run = uuid.uuid4()
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(200, json=cube_success_body())
 
     async with make_async_client(handler) as client:
-        await client.completions.create("cbe_plaincube0001", run_id=run)
+        await client.completions.create(
+            "cbe_plaincube0001", run_path=["nightly", "rec-1"], tags=["urgent"]
+        )
 
-    assert body_of(seen[0])["run_id"] == str(run)
+    body = body_of(seen[0])
+    assert body["run_path"] == ["nightly", "rec-1"] and body["tags"] == ["urgent"]
 
 
 # ---- reading it back ---------------------------------------------------------
 
 
-def test_a_record_exposes_its_run_and_application():
+def test_a_record_exposes_its_run_in_the_callers_own_keys():
+    """Reading back an internal id would tell a caller nothing they could
+    recognise — the path is the answer they asked the question with."""
     from cubic.types import CompletionRecord
 
-    run, app = str(uuid.uuid4()), str(uuid.uuid4())
+    app = str(uuid.uuid4())
     record = CompletionRecord.model_validate(
-        {"request_id": str(uuid.uuid4()), "status": "success", "run_id": run, "application_id": app}
+        {
+            "request_id": str(uuid.uuid4()),
+            "status": "success",
+            "run": {
+                "public_id": "run_aaaaaaaaaaaaaa",
+                "external_id": "rec-4471",
+                "path": ["nightly-2026-08-21", "rec-4471"],
+                "depth": 1,
+                "root_public_id": "run_bbbbbbbbbbbbbb",
+            },
+            "run_id": "run_aaaaaaaaaaaaaa",
+            "tags": [{"public_id": "tag_aaaaaaaaaaaaaa", "name": "urgent"}],
+            "application_id": app,
+        }
     )
-    assert record.run_id == run
+    assert record.run is not None
+    assert record.run.path == ["nightly-2026-08-21", "rec-4471"]
+    assert record.run.external_id == "rec-4471"
+    # Beside it, the id the analytics filters take.
+    assert record.run_id == "run_aaaaaaaaaaaaaa"
+    assert [t.name for t in record.tags] == ["urgent"]
     assert record.application_id == app
 
 
-def test_an_unattributed_record_reads_as_none_not_missing():
+def test_an_ungrouped_record_reads_as_none_not_missing():
     from cubic.types import CompletionRecord
 
     record = CompletionRecord.model_validate(
         {"request_id": str(uuid.uuid4()), "status": "success"}
     )
-    assert record.run_id is None and record.application_id is None
+    assert record.run is None and record.run_id is None
+    assert record.tags == []
+    assert record.application_id is None

@@ -74,13 +74,33 @@ CREATE_DOC = """Run a cube or polycube by its public ID.
 
         Pass the same ``run_id`` to every call in one workflow and Cubic groups
         them in Logs — including the nested cubes and polycube nodes each call
-        sets off, which inherit it. Any UUID you choose; Cubic never interprets
-        it. Unlike ``client_request_id`` it identifies the WORKFLOW rather than
-        the request, so it applies to polycubes too::
+        sets off, which inherit it. Use whatever key you already have: a job
+        name, a date, an order number. Unlike ``client_request_id`` it
+        identifies the WORKFLOW rather than the request, so it applies to
+        polycubes too::
 
-            run = uuid.uuid4()
-            client.completions.create(extract_id, {...}, run_id=run)
-            client.completions.create(summarise_id, {...}, run_id=run)
+            client.completions.create(extract_id, {...}, run_id="nightly-2026-08-21")
+            client.completions.create(summarise_id, {...}, run_id="nightly-2026-08-21")
+
+        When a run has structure — a job that processes many records, each
+        triggering several calls — give ``run_path`` instead, root first. Cubic
+        creates whatever levels are missing, so you never declare a run before
+        using it, and re-sending the same path is idempotent::
+
+            for record in records:
+                client.completions.create(
+                    extract_id, {...}, run_path=["nightly-2026-08-21", record.id]
+                )
+
+        You can then open the run, see its records, and open a record to see its
+        completions. ``run_id`` is simply sugar for a one-level path — sending
+        both raises, since they are two spellings of one field.
+
+        ``tags`` are the orthogonal dimension: flat labels, any number per call,
+        created the first time you use one. Filtering by several NARROWS, so
+        ``urgent`` + ``eu-region`` is the urgent EU work::
+
+            client.completions.create(cube_id, {...}, tags=["urgent", "eu-region"])
 
         Raises a :class:`~cubic.CompletionError` subclass when the pipeline
         fails, and transport-level :class:`~cubic.CubicError` subclasses for
@@ -104,7 +124,9 @@ def build_create_payload(
     metadata: dict[str, Any] | None,
     client_request_id: str | uuid.UUID | None,
     known_polycube: bool,
-    run_id: str | uuid.UUID | None = None,
+    run_id: str | None = None,
+    run_path: list[str] | None = None,
+    tags: list[str] | None = None,
 ) -> tuple[dict[str, Any], bool, str | None]:
     """Build the POST /v1/completions body.
 
@@ -142,12 +164,21 @@ def build_create_payload(
         payload["client_request_id"] = str(client_request_id)
     elif auto_request_id is not None:
         payload["client_request_id"] = auto_request_id
-    # Unlike client_request_id, run_id is NOT a cube-only field: a polycube
-    # accepts it, and grouping the parent plus every node under one run is the
-    # point. So it stays out of ``caller_supplied_cube_only`` below and off the
-    # list of things the polycube retry has to strip.
+    # Unlike client_request_id, these are NOT cube-only fields: a polycube
+    # accepts them, and grouping the parent plus every node under one run — and
+    # under one set of tags — is the point. So they stay out of
+    # ``caller_supplied_cube_only`` below and off the list of things the
+    # polycube retry has to strip.
+    #
+    # ``run_id`` and ``run_path`` are two spellings of one field and the API
+    # refuses both; sending only what was given keeps that error where it
+    # belongs, on the caller who set both.
     if run_id is not None:
         payload["run_id"] = str(run_id)
+    if run_path is not None:
+        payload["run_path"] = [str(level) for level in run_path]
+    if tags is not None:
+        payload["tags"] = [str(tag) for tag in tags]
 
     # Only the SDK-injected idempotency key can be conflicting when none of
     # the cube-only inputs were supplied by the caller.
@@ -306,9 +337,13 @@ def build_render_payload(cube_id: str, variables, **kwargs) -> dict[str, Any]:
         if value is not None:
             payload[key] = value
     # A render is still a step in a workflow — you fetched a prompt to run it —
-    # so it groups with the rest of the run like any other call.
+    # so it groups and tags with the rest of the run like any other call.
     if kwargs.get("run_id") is not None:
         payload["run_id"] = str(kwargs["run_id"])
+    if kwargs.get("run_path") is not None:
+        payload["run_path"] = [str(level) for level in kwargs["run_path"]]
+    if kwargs.get("tags") is not None:
+        payload["tags"] = [str(tag) for tag in kwargs["tags"]]
     if kwargs.get("test_mode"):
         payload["test_mode"] = True
     return payload
@@ -552,7 +587,9 @@ class Completions:
         parameters: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         test_mode: bool = False,
-        run_id: str | uuid.UUID | None = None,
+        run_id: str | None = None,
+        run_path: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> RenderedPrompt:
         """The cube's prompt, substituted and ready to run, without running it.
 
@@ -572,6 +609,8 @@ class Completions:
             metadata=metadata,
             test_mode=test_mode,
             run_id=run_id,
+            run_path=run_path,
+            tags=tags,
         )
         response = self._client.request("POST", "/v1/completions/render", json_body=payload)
         return RenderedPrompt.model_validate(response.json())
@@ -692,7 +731,9 @@ class Completions:
         metadata: dict[str, Any] | None = None,
         attachments: Any = None,  # retired — see RETIRED_ATTACHMENTS_MESSAGE
         client_request_id: str | uuid.UUID | None = None,
-        run_id: str | uuid.UUID | None = None,
+        run_id: str | None = None,
+        run_path: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> CompletionResult | PolycubeResult:
         if attachments:
             raise err.CubicError(RETIRED_ATTACHMENTS_MESSAGE)
@@ -713,6 +754,8 @@ class Completions:
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
             run_id=run_id,
+            run_path=run_path,
+            tags=tags,
         )
         try:
             response = self._client.request(
@@ -787,7 +830,9 @@ class AsyncCompletions:
         parameters: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         test_mode: bool = False,
-        run_id: str | uuid.UUID | None = None,
+        run_id: str | None = None,
+        run_path: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> RenderedPrompt:
         """The cube's prompt, substituted and ready to run, without running it."""
         variables = await abind_file_variables(variables, self._client.attachments.upload)
@@ -802,6 +847,8 @@ class AsyncCompletions:
             metadata=metadata,
             test_mode=test_mode,
             run_id=run_id,
+            run_path=run_path,
+            tags=tags,
         )
         response = await self._client.request(
             "POST", "/v1/completions/render", json_body=payload
@@ -892,7 +939,9 @@ class AsyncCompletions:
         metadata: dict[str, Any] | None = None,
         attachments: Any = None,  # retired — see RETIRED_ATTACHMENTS_MESSAGE
         client_request_id: str | uuid.UUID | None = None,
-        run_id: str | uuid.UUID | None = None,
+        run_id: str | None = None,
+        run_path: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> CompletionResult | PolycubeResult:
         if attachments:
             raise err.CubicError(RETIRED_ATTACHMENTS_MESSAGE)
@@ -913,6 +962,8 @@ class AsyncCompletions:
             client_request_id=client_request_id,
             known_polycube=self._client._kind_cache.get(cube_id) == "polycube",
             run_id=run_id,
+            run_path=run_path,
+            tags=tags,
         )
         try:
             response = await self._client.request(
