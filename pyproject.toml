@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # PyPI distribution name ("cubic" is taken by an unrelated bioimaging package);
 # the import package remains `cubic`.
 name = "cubic-sdk"
-version = "0.13.0"
+version = "0.13.1"
 description = "Official Python SDK for Cubic — run your Cubes and Polycubes from any application."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,3 +50,8 @@ packages = ["src/cubic"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    # Runs against a real deployment named by CUBIC_BASE_URL + CUBIC_API_KEY.
+    # Skipped cleanly when either is absent, so `pytest` stays a mock run.
+    "live: needs a running Cubic (see `make live`)",
+]

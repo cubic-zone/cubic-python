@@ -595,3 +595,31 @@ client = Cubic(
     max_keepalive_connections=50,        #   (defaults: httpx's 100/20)
 )
 ```
+
+## Development
+
+```bash
+make install   # editable install with the dev dependencies
+make test      # the mock suite — no service, no key, no network
+make build     # sdist + wheel, then `twine check`
+```
+
+### The live suite
+
+`make test` answers every request from an `httpx.MockTransport`, which proves
+the SDK against a fixture. `make live` proves it against a running Cubic:
+
+```bash
+CUBIC_BASE_URL=https://your-deployment.example CUBIC_API_KEY=mxk_... make live
+```
+
+Both variables are required, and neither has a default. A key on its own will
+not start a live run — naming the deployment is what stops a key you exported
+for something else from pointing the suite at the hosted API. Without them the
+live cases skip and `pytest` is the mock suite alone, so CI needs no secret.
+
+The live cases only read, or deliberately fail to authenticate: nothing is
+created, updated or deleted. Pointing them at staging spends no quota and
+leaves nothing behind. What they check is that a real deployment's responses
+parse into the SDK's models, that the fields the SDK reads are present, and
+that its error bodies still map to the exception classes your code catches.

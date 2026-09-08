@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Callable
 
@@ -106,3 +107,62 @@ def error_envelope(status: int, detail: str, error_code: str | None = None, **ex
         body["error_code"] = error_code
     body.update(extra)
     return httpx.Response(status, json=body, headers={"X-Request-ID": "req-test-123"})
+
+
+# --- Live mode -------------------------------------------------------------
+#
+# The suite above drives an `httpx.MockTransport`: the handler answers, and the
+# assertions check what the client did with the answer. That proves the SDK
+# against a fixture. `tests/test_live.py` proves it against a running service.
+#
+# Live tests are opt-in by environment, and BOTH variables are required:
+#
+#     CUBIC_BASE_URL=http://127.0.0.1:8010 CUBIC_API_KEY=mxk_… make live
+#
+# Requiring the base URL as well as the key is deliberate. A key alone is
+# something a developer may well have exported for their own use, and picking
+# it up implicitly would point this suite at the hosted API without anyone
+# asking it to. Naming the deployment is what turns a key into consent.
+
+LIVE_BASE_URL_ENV = "CUBIC_BASE_URL"
+LIVE_API_KEY_ENV = "CUBIC_API_KEY"
+
+
+def live_config() -> tuple[str, str] | None:
+    """The live target, or ``None`` when this is not a live run."""
+    base_url = os.environ.get(LIVE_BASE_URL_ENV)
+    api_key = os.environ.get(LIVE_API_KEY_ENV)
+    if not base_url or not api_key:
+        return None
+    return base_url, api_key
+
+
+def live_skip_reason() -> str | None:
+    """Why a live test cannot run here, or ``None`` when it can."""
+    missing = [n for n in (LIVE_BASE_URL_ENV, LIVE_API_KEY_ENV) if not os.environ.get(n)]
+    if not missing:
+        return None
+    return f"live run needs {' and '.join(missing)} in the environment"
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Skip `live`-marked tests cleanly when the environment does not name a
+    deployment. A skip says "not asked for"; a failure would say "broken"."""
+    reason = live_skip_reason()
+    if reason is None:
+        return
+    skip = pytest.mark.skip(reason=reason)
+    for item in items:
+        if "live" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture
+def live_client():
+    """A real-transport client pointed at the deployment the environment names."""
+    config = live_config()
+    if config is None:
+        pytest.skip(live_skip_reason() or "not a live run")
+    base_url, api_key = config
+    with Cubic(api_key=api_key, base_url=base_url, backoff_base=0.0) as client:
+        yield client
