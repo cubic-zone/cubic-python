@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## 0.13.1 (2026-09-08)
+
+Cubic's API was rebuilt underneath this SDK — new authentication, with developer
+keys now introspected by Molten rather than verified inside Cubic. This release
+is the SDK checked against that stack. **No SDK change was needed**, and none is
+made: `docs/SDK_COMPAT.md` in the Cubic repository, the compatibility list this
+release was scoped from, names no SDK defect. Every case it excludes is excluded
+because the suite asserts on its own mock, gives one fixture id two meanings, or
+exhausts a Free tier's caps — statements about the suite and the account, not
+about this package.
+
+Verified unchanged against the rebuilt API, rather than altered:
+
+- **`mxk_` keys** are presented exactly as before.
+- **`invalid_api_key`**, the code Molten's introspection returns for a key it
+  cannot resolve, arrives as a 401 and already maps to `AuthenticationError`.
+  Dispatch is by HTTP status here, so the new code needed no new branch.
+- **Project ids** were already the public `prj_…` strings the API takes; nothing
+  in the SDK ever typed one as a UUID.
+- **The external-execution attach fields** (`flux_request_ids`, `cost_usd`) are
+  accepted: response models ignore unknown fields, and `CompletionRecord` keeps
+  them on `model_extra`.
+- **`client_request_id` and `Idempotency-Key`** behave as they did.
+
+What is new is a way to check all of that yourself:
+
+- **A live suite.** `make live` runs the SDK against a real deployment named by
+  `CUBIC_BASE_URL` and `CUBIC_API_KEY`, asserting that its responses parse, that
+  the fields the SDK reads are there, and that its errors still map to the
+  exceptions you catch. Both variables are required and neither has a default, so
+  a key exported for something else cannot point the suite at the hosted API. The
+  cases only read or deliberately fail to authenticate — nothing is created,
+  updated or deleted — and they skip cleanly when the variables are absent, so
+  `pytest` remains the mock suite and CI needs no secret.
+- **A `Makefile`** — `make install`, `test`, `live`, `build`.
+
 ## 0.13.0 (2026-08-21)
 
 - **Group runs the way your job is actually shaped, and tag them.** `run_id` is
